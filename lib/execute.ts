@@ -1,148 +1,142 @@
 import type { RunFunction, ProcessingContext } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
 
-/**
- * True when an interruption is requested for this processing.
- * This is set by the `stop` function, which is called when the processing is stopped.
- */
-let shouldBeStopped = false
+import { spawn, exec } from 'child_process'
+import util from 'util'
+import fs from 'fs-extra'
+import * as path from 'path'
+import { pipeline } from 'node:stream/promises'
+import { ogr2ogr } from 'ogr2ogr'
+
+const execute = util.promisify(exec)
+
+let processType = ''
 
 export const run: RunFunction<ProcessingConfig> = async (context) => {
-  const { processingConfig, log } = context
-  await log.step('Starting processing')
-  await log.info('Context (log in extra)', context)
+  const { pluginConfig, processingConfig, processingId, secrets, dir, tmpDir, axios, log, patchConfig, ws } = context
+  try {
+    await log.info('Réception du traitement')
 
-  if (processingConfig.delay) await applyDelay(context)
-  if (shouldBeStopped) return // If the processing should be stopped, we return early to stop it gracefully
+    await download(processingConfig, secrets, dir, axios, log)
 
-  // To test error handling in processings
-  if (processingConfig.throwError) {
-    throw new Error('Intentional error during processing execution')
+    // TODO : Corriger ce problème
+    // const sortie = await exec('ogrinfo', ['./BDT_3-5_GPKG_LAMB93_D005-ED2026-03-15.gpkg'], log)
+    // const data = await ogr2ogr('../BDT_3-5_GPKG_LAMB93_D005-ED2026-03-15.gpkg')
+    // log.info('data : ', data)
+
+    // let { stream } = await ogr2ogr(data, { format: 'ESRI Shapefile' })
+
+    // Convert ESRI Shapefile stream to KML text.
+    // let { text } = await ogr2ogr(stream, { format: 'KML' })
+    // log.info('Texte : ', text)
+
+    // await createDataset(context)
+  } catch (err) {
+    log.error(`Error !!!!!! ${err} `)
   }
-
-  await sendTestMail(context)
-  if (shouldBeStopped) return
-
-  let dataset
-  if (processingConfig.datasetMode === 'create') dataset = await createDataset(context)
-  else if (processingConfig.datasetMode === 'update') dataset = await checkDataset(context)
-  if (shouldBeStopped) return
-
-  await testLogProgress(context)
-  if (shouldBeStopped) return
-
-  await addLine(context, dataset.id)
-
-  if (processingConfig.deleteOnComplete) return { deleteOnComplete: true as const }
 }
 
-/**
- * Sets `shouldBeStopped = true` to indicate that the processing should be stopped.
- * The `run` function checks the `shouldBeStopped` variable to stop the processing gracefully.
- */
-export const stop: () => Promise<void> = async () => { shouldBeStopped = true }
+export const download = async (processingConfig, secrets, dir, axios, log) => {
+  try {
+    await fs.ensureDir(dir)
 
-/**
- * Utility function to test that the processing correctly handles interruption.
- *
- * When a processing is shouldBeStopped:
- * - The `stop` function is called (sets `shouldBeStopped = true`)
- * - If `ignoreStop` is false: this function detects the stop and returns early (graceful stop)
- * - If `ignoreStop` is true: this function continues running, but the processing should still
- *   be killed by processings after a timeout if the run doesn't finish by itself
- */
-const applyDelay = async ({ processingConfig, log }: ProcessingContext<ProcessingConfig>) => {
-  await log.step('Applying delay')
-  await log.info(`Pausing for ${processingConfig.delay} second(s) ...`)
+    await log.step('Téléchargement du fichier')
+    let tmpFile = path.join(dir, 'file')
+    await fs.ensureFile(tmpFile)
 
-  // Check each second if the processing should be shouldBeStopped, to be able to stop it during the delay
-  for (let i = 0; i < (processingConfig.delay || 0); i++) {
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    if (shouldBeStopped && !processingConfig.ignoreStop) {
-      return await log.warning('Gracefully interrupted during wait')
+    const url = new URL(processingConfig.url)
+    let filename = decodeURIComponent(path.parse(processingConfig.url).base)
+
+    filename = await fetchHTTP(processingConfig, secrets, tmpFile, axios) || filename
+
+    // Try to prevent weird bug with NFS by forcing syncing file before reading it
+    const fd = await fs.open(tmpFile, 'r')
+    await fs.fsync(fd)
+    await fs.close(fd)
+    await log.info(`Le fichier a été téléchargé (${filename})`)
+
+    let gpkgFilename
+
+    if (filename.includes('.zip')) {
+      await log.info(`Dézippage du fichier ${filename}`)
+
+      // Unzip
+      await execute(`unzip -j ${tmpFile} -d ${tmpFile}-dezip`)
+      const filesGpkg: string[] = []
+
+      await fs.readdir(`${tmpFile}-dezip`)
+        .then((files) => {
+          files.forEach(async file => {
+            if (file.endsWith('.gpkg')) {
+              filesGpkg.push(`${tmpFile}-dezip/${file}`)
+            }
+          })
+        })
+
+      const nbFichiers = filesGpkg.length
+
+      if (nbFichiers <= 0) {
+        throw new Error('Il n\' y a pas de fichiers .gpkg à traiter dans ce zip.')
+      } else {
+        const tabSplit = filesGpkg[0].split('/')
+        gpkgFilename = tabSplit[tabSplit.length - 1]
+        tmpFile = filesGpkg[0]
+      }
+    } else if (filename.includes('gpkg')) {
+      await log.info('Récupération du fichier gpkg')
+      gpkgFilename = filename
+    } else {
+      await log.info('Le format n \'est pas pris en charge')
+      throw new Error('Format non pris en charge')
     }
+
+    await log.info(`Traitement du fichier ${gpkgFilename}`)
+    await log.info(`Fichier réel ${tmpFile}`)
+  } catch (err) {
+    await log.error(`Erreur : ${err}`)
   }
 }
 
-/**
- * Sends a test email if the configuration provides it (`email.from` and `email.to` fields filled in).
- * Builds a simple email with an attachment and sends it via the processing mail service.
- */
-const sendTestMail = async ({ processingConfig, log, sendMail }: ProcessingContext<ProcessingConfig>) => {
-  if (!processingConfig.email?.to || !processingConfig.email?.from) return
-  await log.step('Sending test email')
-  const mail = {
-    from: processingConfig.email.from,
-    to: processingConfig.email.to,
-    subject: 'Hello world processing !',
-    text: 'A test email',
-    attachments: [{ filename: 'test.txt', content: 'A test attachment' }]
+class FileNotFoundError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'FileNotFoundError'
   }
-  await log.info('Mail content: ' + JSON.stringify(mail))
-  // @ts-ignore they are maybe an types error in the lib-common-types
-  await sendMail(mail)
 }
 
-/**
- * Creates a new REST dataset with the title and schema defined in the config.
- * Updates the config with the id and title of the created dataset for future runs.
- */
+const fetchHTTP = async (processingConfig: ProcessingConfig, secrets: ProcessingContext['secrets'], tmpFile: string, axios: ProcessingContext['axios']) => {
+  const password = secrets?.password ?? processingConfig.password
+  const opts: any = { responseType: 'stream', maxRedirects: 4 }
+  if (processingConfig.username && password) {
+    opts.auth = { username: processingConfig.username, password }
+  }
+  let res
+  try {
+    res = await axios.get(processingConfig.url, opts)
+  } catch (err: any) {
+    if (err.response?.status === 404) throw new FileNotFoundError(`File not found: ${processingConfig.url}`)
+    throw err
+  }
+  await pipeline(res.data, fs.createWriteStream(tmpFile))
+  if (processingConfig.filename) return processingConfig.filename
+  if (res.headers['content-disposition'] && res.headers['content-disposition'].includes('filename=')) {
+    if (res.headers['content-disposition'].match(/filename=(.*);/)) return res.headers['content-disposition'].match(/filename=(.*);/)[1]
+    if (res.headers['content-disposition'].match(/filename="(.*)"/)) return res.headers['content-disposition'].match(/filename="(.*)"/)[1]
+    if (res.headers['content-disposition'].match(/filename=(.*)/)) return res.headers['content-disposition'].match(/filename=(.*)/)[1]
+  }
+  if (res.request && res.request.res && res.request.res.responseUrl) return decodeURIComponent(path.parse(res.request.res.responseUrl).base)
+}
+
 const createDataset = async ({ processingConfig, secrets, processingId, axios, log, patchConfig }: ProcessingContext<ProcessingConfig>) => {
   await log.step('Creating dataset')
   const dataset = (await axios.post('api/v1/datasets', {
     title: processingConfig.dataset.title,
-    description: secrets?.secretField ?? processingConfig.secretField ?? '',
+    description: '',
     isRest: true,
-    schema: [{ key: 'message', type: 'string' }],
+    schema: [{ key: 'message', type: 'string' }, { key: 'test', type: 'number' }],
     extras: { processingId }
   })).data
   await log.info(`Dataset created, id="${dataset.id}", title="${dataset.title}"`)
   await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
   return dataset
-}
-
-/**
- * Checks that the configured dataset exists and returns its information.
- * Updates its description with the secret if it has changed.
- * Throws an error if the dataset is not found.
- */
-const checkDataset = async ({ processingConfig, secrets, axios, log }: ProcessingContext<ProcessingConfig>) => {
-  await log.step('Checking dataset')
-  const dataset = (await axios.get(`api/v1/datasets/${processingConfig.dataset.id}`)).data
-  if (!dataset) throw new Error(`Dataset not found, id="${processingConfig.dataset.id}"`)
-  await log.info(`Dataset exists, id="${dataset.id}", title="${dataset.title}"`)
-  if (secrets?.secretField) {
-    await log.step('Updating secret')
-    await axios.patch(`api/v1/datasets/${dataset.id}`, { description: secrets.secretField })
-  }
-  return dataset
-}
-
-/**
- * Tests the progress log system by simulating a long task over 100 steps.
- * Each step takes 100ms, preceded by an initial 2s delay, with stop check at each iteration.
- */
-const testLogProgress = async ({ log }: ProcessingContext<ProcessingConfig>) => {
-  await log.task('Task with progress')
-  await log.progress('Task with progress', 0, 100)
-  await new Promise(resolve => setTimeout(resolve, 2000))
-  for (let i = 0; i < 100; i++) {
-    if (shouldBeStopped) return
-    await new Promise(resolve => setTimeout(resolve, 100))
-    await log.progress('Task with progress', i + 1, 100)
-  }
-}
-
-/**
- * Adds or updates the welcome line in the dataset.
- * The message is the concatenation of the plugin message and the config message.
- * Waits for the dataset finalization to complete via websocket before returning.
- */
-const addLine = async ({ pluginConfig, processingConfig, axios, log, ws }: ProcessingContext<ProcessingConfig>, datasetId: string) => {
-  await log.step('Writing welcome message')
-  await axios.put(`api/v1/datasets/${datasetId}/lines/hello`, {
-    message: pluginConfig.pluginMessage + ' ' + processingConfig.message
-  })
-  await log.info('1 data line written')
-  await ws.waitForJournal(datasetId, 'finalize-end')
 }

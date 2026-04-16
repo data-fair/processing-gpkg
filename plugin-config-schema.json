@@ -1,6 +1,3 @@
 {
-  "type": "object",
-  "properties": {
-    "pluginMessage": { "type": "string", "title": "Default message", "default": "Hello" }
-  }
+  "type": "object"
 }

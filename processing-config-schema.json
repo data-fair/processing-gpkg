@@ -2,8 +2,7 @@
   "type": "object",
   "layout": "tabs",
   "required": [
-    "datasetMode",
-    "message"
+    "datasetMode"
   ],
   "allOf": [
     {
@@ -12,13 +11,15 @@
         "datasetMode": "create",
         "dataset": {
           "id": "",
-          "title": "Hello world "
+          "title": ""
         }
       },
       "oneOf": [
         {
           "title": "Créer un jeu de données",
-          "required": ["dataset"],
+          "required": [
+            "dataset"
+          ],
           "properties": {
             "datasetMode": {
               "type": "string",
@@ -31,43 +32,13 @@
                 "title"
               ],
               "properties": {
-                "title": {
-                  "type": "string",
-                  "title": "Titre",
-                  "default": "Hello world "
-                }
-              }
-            }
-          }
-        },
-        {
-          "title": "Mettre à jour un jeu de données",
-          "required": ["dataset"],
-          "properties": {
-            "datasetMode": {
-              "type": "string",
-              "const": "update"
-            },
-            "dataset": {
-              "type": "object",
-              "title": "Jeu de données",
-              "properties": {
                 "id": {
                   "type": "string",
-                  "title": "Identifiant"
+                  "title": "Identifiant (laissez vide pour calculer un identifiant à partir du titre)"
                 },
                 "title": {
                   "type": "string",
                   "title": "Titre"
-                }
-              },
-              "layout": {
-                "getItems": {
-                  "url": "${context.dataFairUrl}/api/v1/datasets?select=id,title&${context.ownerFilter}&raw=true",
-                  "qSearchParam": "q",
-                  "itemsResults": "results",
-                  "itemTitle": "item.title",
-                  "itemKey": "item.id"
                 }
               }
             }
@@ -76,53 +47,28 @@
       ]
     },
     {
-      "title": "Options de tests",
+      "title": "Paramètres",
+      "required": [
+        "url"
+      ],
       "properties": {
-        "message": {
+        "url": {
+          "title": "URL source",
           "type": "string",
-          "title": "Message",
-          "default": "world !"
+          "description": "Les protocoles supportés sont HTTP, HTTPS\nLes formats supportés sont .zip et .gpkg"
         },
-        "delay": {
-          "type": "integer",
-          "title": "Délai en secondes (utilisé pour tester l'interruption de tâche)",
-          "default": 1
-        },
-        "secretField": {
-          "type": "string",
-          "title": "Champ secret",
-          "description": "La valeur de ce champ est sauvegardé chiffré en base et n'est jamais renvoyé à l'utilisateur. Il peut être utilisé pour stocker des informations sensibles. Pour vérifier que le traitement ai bien accès à la valeur non chiffrée, elle est affiché dans la description du jeu de données. (Utilisé pour tester le chiffrement de données sensibles)",
-          "layout": {
-            "props": {
-              "type": "password",
-              "autocomplete": "suppress"
-            }
-          }
-        },
-        "ignoreStop": {
+        "clearFiles": {
+          "title": "Supprimer les fichiers téléchargés",
           "type": "boolean",
-          "title": "Ignorer l'instruction de stop (utilisé pour tester l'interruption brutale de tâche)"        },
-        "throwError": {
-          "type": "boolean",
-          "title": "Déclencher une erreur (utilisé pour tester la gestion des erreurs)"
+          "default": true
         },
-        "deleteOnComplete": {
-          "type": "boolean",
-          "title": "Supprimer cet execution une fois terminée (utilisé pour tester l'auto suppression)"
-        }
-      }
-    },
-    {
-      "title": "Email",
-      "properties": {
-        "email": {
+        "filter": {
           "type": "object",
+          "title": "Filtrer les couches",
           "properties": {
-            "from": {
-              "type": "string"
-            },
-            "to": {
-              "type": "string"
+            "layer": {
+              "type": "string",
+              "title": "Code couche"
             }
           }
         }
