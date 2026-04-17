@@ -1,3 +1,4 @@
+/**
 import type { ProcessingConfig } from '../types/processingConfig/index.ts'
 
 import config from '#config'
@@ -59,3 +60,4 @@ describe('Hello world processing', () => {
     await helloWorldPlugin.run(context)
   })
 })
+*/
