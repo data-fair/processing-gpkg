@@ -145,8 +145,9 @@ const extraction = async (tmpFile, log) => {
       }
     }
 
+    // If there are no attributes (columns), it is considered unnecessary to retrieve the layer.
     if (layers[i].fields.length <= 0) {
-      await log.warn(`Couche ${i + 1} - ${layers[i].name} - Pas de propriétés, INUTILISABLE`)
+      await log.warn(`Couche ${i + 1} - ${layers[i].name} - Pas d'attributs, INUTILISABLE`)
     } else {
       await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
       layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount }
@@ -170,7 +171,7 @@ const createDatasets = async (processingConfig, processingId, axios, layersField
 
   for (const idLayer of processingConfig.idsLayers) {
     if (!(idLayer in layersFieldList)) {
-      await log.warn(`La couche ${idLayer} n\'est pas présente dans les couches disponibles`)
+      await log.warn(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
     } else {
       await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 

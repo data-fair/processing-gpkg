@@ -9,7 +9,7 @@ import * as path from 'path'
  * Introduction of an error type in case of a file not found.
  */
 class FileNotFoundError extends Error {
-  constructor(message: string) {
+  constructor (message: string) {
     super(message)
     this.name = 'FileNotFoundError'
   }
