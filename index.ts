@@ -1,16 +1,5 @@
-import type { PrepareFunction, RunFunction } from '@data-fair/lib-common-types/processings.js'
+import type { RunFunction } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from './types/processingConfig/index.ts'
-
-/**
- * Function to prepare a processing (trigger when the config is updated).
- * It can be used to:
- * - throw additional errors to validate the config
- * - remove secrets from the config and store them in the secrets object
- */
-export const prepare: PrepareFunction<ProcessingConfig> = async (context) => {
-  const prepare = (await import('./lib/prepare.ts')).default
-  return prepare(context)
-}
 
 /**
  * Function to execute the processing (triggered when the processing is started).

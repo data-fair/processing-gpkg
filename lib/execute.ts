@@ -1,44 +1,50 @@
-import type { RunFunction, ProcessingContext } from '@data-fair/lib-common-types/processings.js'
+import type { RunFunction } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
 
-import { spawn, exec } from 'child_process'
+import { exec } from 'child_process'
 import util from 'util'
 import fs from 'fs-extra'
 import * as path from 'path'
-import { pipeline } from 'node:stream/promises'
-import { ogr2ogr } from 'ogr2ogr'
+
+import { fetchHTTP } from './fetch.ts'
+import { streamLayerToDataset } from './stream-layer.ts'
 
 const execute = util.promisify(exec)
 
-let processType = ''
-
+/**
+ * Input function, allows data processing to begin
+ * @param context Context of the request
+ */
 export const run: RunFunction<ProcessingConfig> = async (context) => {
-  const { pluginConfig, processingConfig, processingId, secrets, tmpDir, axios, log, patchConfig, ws } = context
+  // Retrieving the contextual elements necessary for processing
+  const { processingConfig, processingId, secrets, tmpDir, axios, log } = context
   try {
     const tmpFile = await download(processingConfig, secrets, tmpDir, axios, log)
 
     const layersFieldList = await extraction(tmpFile, log)
 
-    await createDatasets(processingConfig, processingId, axios, layersFieldList, log)
-
-    // TODO : Corriger ce problème
-    // const sortie = await exec('ogrinfo', ['./BDT_3-5_GPKG_LAMB93_D005-ED2026-03-15.gpkg'], log)
-    // const data = await ogr2ogr('../BDT_3-5_GPKG_LAMB93_D005-ED2026-03-15.gpkg')
-    // log.info('data : ', data)
-
-    // let { stream } = await ogr2ogr(data, { format: 'ESRI Shapefile' })
-
-    // Convert ESRI Shapefile stream to KML text.
-    // let { text } = await ogr2ogr(stream, { format: 'KML' })
-    // log.info('Texte : ', text)
-
-    // await createDataset(context)
+    // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
+    if (!processingConfig.idsLayers || processingConfig.idsLayers.length <= 0) {
+      await log.debug('Pas de couches renseignées')
+    } else {
+      await createDatasets(processingConfig, processingId, axios, layersFieldList, tmpFile, log)
+    }
   } catch (err) {
     log.error(`Erreur :  ${err} `)
     throw err
   }
 }
 
+/**
+ * Allows you to download the file and place it in a temporary folder for later processing.
+ * We only process .zip and .gpkg formats; any other format will result in an error.
+ * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
+ * @param secrets           Sensitive information if necessary (such as a password, for example)
+ * @param dir               Directory where to download the file
+ * @param axios             Server for API requests
+ * @param log               Log system that is displayed on the user interface
+ * @returns Full path of the file to be processed
+ */
 const download = async (processingConfig, secrets, dir, axios, log) => {
   await fs.ensureDir(dir)
 
@@ -46,7 +52,6 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
   let tmpFile = path.join(dir, 'file')
   await fs.ensureFile(tmpFile)
 
-  const url = new URL(processingConfig.url)
   let filename = decodeURIComponent(path.parse(processingConfig.url).base)
 
   filename = await fetchHTTP(processingConfig, secrets, tmpFile, axios) || filename
@@ -59,13 +64,15 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
 
   let gpkgFilename
 
-  if (filename.includes('.zip')) {
+  // Check the file format
+  if (filename.endsWith('.zip')) {
     await log.info(`Dézippage du fichier ${filename}`)
 
     // Unzip
     await execute(`unzip -j ${tmpFile} -d ${tmpFile}-dezip`)
-    const filesGpkg: string[] = []
 
+    // We are looking for the .gpkg files contained in the .zip file.
+    const filesGpkg: string[] = []
     await fs.readdir(`${tmpFile}-dezip`)
       .then((files) => {
         files.forEach(async file => {
@@ -80,15 +87,16 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
     if (nbFichiers <= 0) {
       throw new Error('Il n\' y a pas de fichiers .gpkg à traiter dans ce zip.')
     } else {
+      // We keep the first .gpkg file we find, we ignore the others
       const tabSplit = filesGpkg[0].split('/')
       gpkgFilename = tabSplit[tabSplit.length - 1]
       tmpFile = filesGpkg[0]
     }
-  } else if (filename.includes('gpkg')) {
+  } else if (filename.endsWith('gpkg')) {
     await log.info('Récupération du fichier gpkg')
     gpkgFilename = filename
   } else {
-    await log.info('Le format n \'est pas pris en charge')
+    await log.info('Le format n\'est pas pris en charge')
     throw new Error('Format non pris en charge')
   }
 
@@ -97,55 +105,34 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
   return tmpFile
 }
 
-class FileNotFoundError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'FileNotFoundError'
-  }
-}
-
-const fetchHTTP = async (processingConfig: ProcessingConfig, secrets: ProcessingContext['secrets'], tmpFile: string, axios: ProcessingContext['axios']) => {
-  const password = secrets?.password ?? processingConfig.password
-  const opts: any = { responseType: 'stream', maxRedirects: 4 }
-  if (processingConfig.username && password) {
-    opts.auth = { username: processingConfig.username, password }
-  }
-  let res
-  try {
-    res = await axios.get(processingConfig.url, opts)
-  } catch (err: any) {
-    if (err.response?.status === 404) throw new FileNotFoundError(`File not found: ${processingConfig.url}`)
-    throw err
-  }
-  await pipeline(res.data, fs.createWriteStream(tmpFile))
-  if (processingConfig.filename) return processingConfig.filename
-  if (res.headers['content-disposition'] && res.headers['content-disposition'].includes('filename=')) {
-    if (res.headers['content-disposition'].match(/filename=(.*);/)) return res.headers['content-disposition'].match(/filename=(.*);/)[1]
-    if (res.headers['content-disposition'].match(/filename="(.*)"/)) return res.headers['content-disposition'].match(/filename="(.*)"/)[1]
-    if (res.headers['content-disposition'].match(/filename=(.*)/)) return res.headers['content-disposition'].match(/filename=(.*)/)[1]
-  }
-  if (res.request && res.request.res && res.request.res.responseUrl) return decodeURIComponent(path.parse(res.request.res.responseUrl).base)
-}
-
+/**
+ * Allows you to retrieve the layers of a file and organize their structure
+ * @param tmpFile   Full path of the file to be processed
+ * @param log       Log system that is displayed on the user interface
+ * @returns Dictionary of available layer structures (id: {name, fields, featureCount})
+ */
 const extraction = async (tmpFile, log) => {
   await log.step('Récupération de la structure des données')
 
   // Display layers
   const result = await execute(`ogrinfo -json ${tmpFile}`)
 
-  const jsonStructure = JSON.parse(result.stdout)
+  const jsonStructure = await JSON.parse(result.stdout)
 
   const layers = jsonStructure.layers
-  const layersFieldList: { [username: number]: { name: string, fields: any[] } } = []
+  const layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } } = []
 
   for (let i = 0; i < layers.length; i++) {
-    await log.info(`Couche ${i + 1} - ${layers[i].name}`)
-
     for (let j = 0; j < layers[i].fields.length; j++) {
       let typeCorrect = layers[i].fields[j].type.toLowerCase()
 
+      // Check the types
       if (typeCorrect.includes('integer')) {
         typeCorrect = 'integer'
+      }
+
+      if (typeCorrect.includes('real')) {
+        typeCorrect = 'number'
       }
 
       layers[i].fields[j] = {
@@ -158,52 +145,58 @@ const extraction = async (tmpFile, log) => {
       }
     }
 
-    layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields }
+    if (layers[i].fields.length <= 0) {
+      await log.warn(`Couche ${i + 1} - ${layers[i].name} - Pas de propriétés, INUTILISABLE`)
+    } else {
+      await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
+      layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount }
+    }
   }
 
   return layersFieldList
 }
 
-const createDatasets = async (processingConfig, processingId, axios, layersFieldList, log) => {
+/**
+ * Allows you to create the requested layer datasets
+ * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
+ * @param processingId      Identifier of the processing currently in use
+ * @param axios             Server for API requests
+ * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
+ * @param tmpFile           Full path of the file to be processed
+ * @param log               Log system that is displayed on the user interface
+ */
+const createDatasets = async (processingConfig, processingId, axios, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log) => {
   await log.step('Construction des jeux de données')
 
-  if (!processingConfig.idsLayers) {
-    await log.info('Pas de couches renseignées')
-  } else {
-    for (const idLayer of processingConfig.idsLayers) {
-      if (!(idLayer in layersFieldList)) {
-        await log.info(`La couche ${idLayer} n\'est pas présente dans les couches disponibles`)
-      } else {
-        await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
-        for (const field of layersFieldList[idLayer].fields) {
-          await log.debug(`\tNom : ${field.key} - Type : ${field.type}`)
-        }
-        const fields = layersFieldList[idLayer].fields
-        console.log('Schéma : ', fields)
-        const dataset = (await axios.post('api/v1/datasets', {
-          title: `${processingConfig.dataset.title}-${layersFieldList[idLayer].name}`,
-          description: '',
-          isRest: true,
-          schema: fields,
-          extras: { processingId }
-        })).data
-        await log.info(`Dataset created, id="${dataset.id}", title="${dataset.title}"`)
-        // await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
+  for (const idLayer of processingConfig.idsLayers) {
+    if (!(idLayer in layersFieldList)) {
+      await log.warn(`La couche ${idLayer} n\'est pas présente dans les couches disponibles`)
+    } else {
+      await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
+
+      // Display names and types of the fields
+      for (const field of layersFieldList[idLayer].fields) {
+        await log.debug(`   Nom : ${field.key} - Type : ${field.type}`)
       }
+
+      // Create the dataset, empty
+      const fields = layersFieldList[idLayer].fields
+      const dataset = (await axios.post('api/v1/datasets', {
+        title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
+        description: '',
+        isRest: true,
+        schema: fields,
+        extras: { processingId }
+      })).data
+      await log.info(`   Jeu de donnée créé, id="${dataset.id}", titre="${dataset.title}"`)
+
+      // Dataset population
+      await streamLayerToDataset(tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log)
+
+      await log.info('Jeu de données complet')
+      await log.info('')
+
+      // await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
     }
   }
-}
-
-const createDataset = async ({ processingConfig, secrets, processingId, axios, log, patchConfig }: ProcessingContext<ProcessingConfig>) => {
-  await log.step('Creating dataset')
-  const dataset = (await axios.post('api/v1/datasets', {
-    title: processingConfig.dataset.title,
-    description: '',
-    isRest: true,
-    schema: [{ key: 'message', type: 'string' }, { key: 'test', type: 'number' }],
-    extras: { processingId }
-  })).data
-  await log.info(`Dataset created, id="${dataset.id}", title="${dataset.title}"`)
-  await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
-  return dataset
 }

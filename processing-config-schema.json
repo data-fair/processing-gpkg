@@ -6,7 +6,7 @@
   ],
   "allOf": [
     {
-      "title": "Jeu de données",
+      "title": "Liste de jeux de données",
       "default": {
         "datasetMode": "create",
         "dataset": {
@@ -16,7 +16,7 @@
       },
       "oneOf": [
         {
-          "title": "Créer un jeu de données",
+          "title": "Créer des jeux de données éditables",
           "required": [
             "dataset"
           ],
@@ -29,16 +29,13 @@
             "dataset": {
               "type": "object",
               "required": [
-                "title"
+                "prefix"
               ],
               "properties": {
-                "id": {
+                "prefix": {
                   "type": "string",
-                  "title": "Identifiant (laissez vide pour calculer un identifiant à partir du titre)"
-                },
-                "title": {
-                  "type": "string",
-                  "title": "Titre"
+                  "title": "Préfixe des noms des jeux de données",
+                  "description": "Les titres des jeux de données sont construits avec ce préfixe et le nom de la couhe correspondante."
                 }
               }
             }
@@ -55,7 +52,7 @@
         "url": {
           "title": "URL source",
           "type": "string",
-          "description": "Les protocoles supportés sont HTTP, HTTPS\nLes formats supportés sont .zip et .gpkg"
+          "description": "Les protocoles supportés sont HTTP et HTTPS, les formats supportés sont .zip et .gpkg."
         },
         "idsLayers": {
           "type": "array",
@@ -64,9 +61,6 @@
             "type": "integer",
             "minimum": 1
           },
-          "default": [
-            1
-          ],
           "description": "Les nombres à indiquer correspondent aux numéros des couches à extraire. Ne rien indiquer affichera seulement les couches disponibles sans les extraire."
         }
       }
