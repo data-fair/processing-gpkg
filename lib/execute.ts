@@ -13,11 +13,13 @@ const execute = util.promisify(exec)
 let processType = ''
 
 export const run: RunFunction<ProcessingConfig> = async (context) => {
-  const { pluginConfig, processingConfig, processingId, secrets, dir, tmpDir, axios, log, patchConfig, ws } = context
+  const { pluginConfig, processingConfig, processingId, secrets, tmpDir, axios, log, patchConfig, ws } = context
   try {
-    await log.info('Réception du traitement')
+    const tmpFile = await download(processingConfig, secrets, tmpDir, axios, log)
 
-    await download(processingConfig, secrets, dir, axios, log)
+    const layersFieldList = await extraction(tmpFile, log)
+
+    await createDatasets(processingConfig, processingId, axios, layersFieldList, log)
 
     // TODO : Corriger ce problème
     // const sortie = await exec('ogrinfo', ['./BDT_3-5_GPKG_LAMB93_D005-ED2026-03-15.gpkg'], log)
@@ -32,69 +34,67 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
 
     // await createDataset(context)
   } catch (err) {
-    log.error(`Error !!!!!! ${err} `)
+    log.error(`Erreur :  ${err} `)
+    throw err
   }
 }
 
-export const download = async (processingConfig, secrets, dir, axios, log) => {
-  try {
-    await fs.ensureDir(dir)
+const download = async (processingConfig, secrets, dir, axios, log) => {
+  await fs.ensureDir(dir)
 
-    await log.step('Téléchargement du fichier')
-    let tmpFile = path.join(dir, 'file')
-    await fs.ensureFile(tmpFile)
+  await log.step('Téléchargement du fichier')
+  let tmpFile = path.join(dir, 'file')
+  await fs.ensureFile(tmpFile)
 
-    const url = new URL(processingConfig.url)
-    let filename = decodeURIComponent(path.parse(processingConfig.url).base)
+  const url = new URL(processingConfig.url)
+  let filename = decodeURIComponent(path.parse(processingConfig.url).base)
 
-    filename = await fetchHTTP(processingConfig, secrets, tmpFile, axios) || filename
+  filename = await fetchHTTP(processingConfig, secrets, tmpFile, axios) || filename
 
-    // Try to prevent weird bug with NFS by forcing syncing file before reading it
-    const fd = await fs.open(tmpFile, 'r')
-    await fs.fsync(fd)
-    await fs.close(fd)
-    await log.info(`Le fichier a été téléchargé (${filename})`)
+  // Try to prevent weird bug with NFS by forcing syncing file before reading it
+  const fd = await fs.open(tmpFile, 'r')
+  await fs.fsync(fd)
+  await fs.close(fd)
+  await log.info(`Le fichier a été téléchargé (${filename})`)
 
-    let gpkgFilename
+  let gpkgFilename
 
-    if (filename.includes('.zip')) {
-      await log.info(`Dézippage du fichier ${filename}`)
+  if (filename.includes('.zip')) {
+    await log.info(`Dézippage du fichier ${filename}`)
 
-      // Unzip
-      await execute(`unzip -j ${tmpFile} -d ${tmpFile}-dezip`)
-      const filesGpkg: string[] = []
+    // Unzip
+    await execute(`unzip -j ${tmpFile} -d ${tmpFile}-dezip`)
+    const filesGpkg: string[] = []
 
-      await fs.readdir(`${tmpFile}-dezip`)
-        .then((files) => {
-          files.forEach(async file => {
-            if (file.endsWith('.gpkg')) {
-              filesGpkg.push(`${tmpFile}-dezip/${file}`)
-            }
-          })
+    await fs.readdir(`${tmpFile}-dezip`)
+      .then((files) => {
+        files.forEach(async file => {
+          if (file.endsWith('.gpkg')) {
+            filesGpkg.push(`${tmpFile}-dezip/${file}`)
+          }
         })
+      })
 
-      const nbFichiers = filesGpkg.length
+    const nbFichiers = filesGpkg.length
 
-      if (nbFichiers <= 0) {
-        throw new Error('Il n\' y a pas de fichiers .gpkg à traiter dans ce zip.')
-      } else {
-        const tabSplit = filesGpkg[0].split('/')
-        gpkgFilename = tabSplit[tabSplit.length - 1]
-        tmpFile = filesGpkg[0]
-      }
-    } else if (filename.includes('gpkg')) {
-      await log.info('Récupération du fichier gpkg')
-      gpkgFilename = filename
+    if (nbFichiers <= 0) {
+      throw new Error('Il n\' y a pas de fichiers .gpkg à traiter dans ce zip.')
     } else {
-      await log.info('Le format n \'est pas pris en charge')
-      throw new Error('Format non pris en charge')
+      const tabSplit = filesGpkg[0].split('/')
+      gpkgFilename = tabSplit[tabSplit.length - 1]
+      tmpFile = filesGpkg[0]
     }
-
-    await log.info(`Traitement du fichier ${gpkgFilename}`)
-    await log.info(`Fichier réel ${tmpFile}`)
-  } catch (err) {
-    await log.error(`Erreur : ${err}`)
+  } else if (filename.includes('gpkg')) {
+    await log.info('Récupération du fichier gpkg')
+    gpkgFilename = filename
+  } else {
+    await log.info('Le format n \'est pas pris en charge')
+    throw new Error('Format non pris en charge')
   }
+
+  await log.info(`Traitement du fichier ${gpkgFilename}`)
+
+  return tmpFile
 }
 
 class FileNotFoundError extends Error {
@@ -125,6 +125,73 @@ const fetchHTTP = async (processingConfig: ProcessingConfig, secrets: Processing
     if (res.headers['content-disposition'].match(/filename=(.*)/)) return res.headers['content-disposition'].match(/filename=(.*)/)[1]
   }
   if (res.request && res.request.res && res.request.res.responseUrl) return decodeURIComponent(path.parse(res.request.res.responseUrl).base)
+}
+
+const extraction = async (tmpFile, log) => {
+  await log.step('Récupération de la structure des données')
+
+  // Display layers
+  const result = await execute(`ogrinfo -json ${tmpFile}`)
+
+  const jsonStructure = JSON.parse(result.stdout)
+
+  const layers = jsonStructure.layers
+  const layersFieldList: { [username: number]: { name: string, fields: any[] } } = []
+
+  for (let i = 0; i < layers.length; i++) {
+    await log.info(`Couche ${i + 1} - ${layers[i].name}`)
+
+    for (let j = 0; j < layers[i].fields.length; j++) {
+      let typeCorrect = layers[i].fields[j].type.toLowerCase()
+
+      if (typeCorrect.includes('integer')) {
+        typeCorrect = 'integer'
+      }
+
+      layers[i].fields[j] = {
+        ...layers[i].fields[j],
+        key: layers[i].fields[j].name,
+        type: typeCorrect
+      }
+      if (!layers[i].fields[j].type) {
+        throw new Error(`Pas de type pour ${layers[i].fields[j].name}`)
+      }
+    }
+
+    layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields }
+  }
+
+  return layersFieldList
+}
+
+const createDatasets = async (processingConfig, processingId, axios, layersFieldList, log) => {
+  await log.step('Construction des jeux de données')
+
+  if (!processingConfig.idsLayers) {
+    await log.info('Pas de couches renseignées')
+  } else {
+    for (const idLayer of processingConfig.idsLayers) {
+      if (!(idLayer in layersFieldList)) {
+        await log.info(`La couche ${idLayer} n\'est pas présente dans les couches disponibles`)
+      } else {
+        await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
+        for (const field of layersFieldList[idLayer].fields) {
+          await log.debug(`\tNom : ${field.key} - Type : ${field.type}`)
+        }
+        const fields = layersFieldList[idLayer].fields
+        console.log('Schéma : ', fields)
+        const dataset = (await axios.post('api/v1/datasets', {
+          title: `${processingConfig.dataset.title}-${layersFieldList[idLayer].name}`,
+          description: '',
+          isRest: true,
+          schema: fields,
+          extras: { processingId }
+        })).data
+        await log.info(`Dataset created, id="${dataset.id}", title="${dataset.title}"`)
+        // await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
+      }
+    }
+  }
 }
 
 const createDataset = async ({ processingConfig, secrets, processingId, axios, log, patchConfig }: ProcessingContext<ProcessingConfig>) => {

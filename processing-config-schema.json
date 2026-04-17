@@ -57,20 +57,17 @@
           "type": "string",
           "description": "Les protocoles supportés sont HTTP, HTTPS\nLes formats supportés sont .zip et .gpkg"
         },
-        "clearFiles": {
-          "title": "Supprimer les fichiers téléchargés",
-          "type": "boolean",
-          "default": true
-        },
-        "filter": {
-          "type": "object",
-          "title": "Filtrer les couches",
-          "properties": {
-            "layer": {
-              "type": "string",
-              "title": "Code couche"
-            }
-          }
+        "idsLayers": {
+          "type": "array",
+          "title": "Couches à extraire",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "default": [
+            1
+          ],
+          "description": "Les nombres à indiquer correspondent aux numéros des couches à extraire. Ne rien indiquer affichera seulement les couches disponibles sans les extraire."
         }
       }
     }
