@@ -1,5 +1,6 @@
-import type { RunFunction } from '@data-fair/lib-common-types/processings.js'
+import type { RunFunction, LogFunctions } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
+import type { AxiosInstance } from 'axios'
 
 import { exec } from 'child_process'
 import util from 'util'
@@ -55,7 +56,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
  * @param log               Log system that is displayed on the user interface
  * @returns Full path of the file to be processed
  */
-const download = async (processingConfig, secrets, dir, axios, log) => {
+const download = async (processingConfig, secrets, dir : string, axios : AxiosInstance, log : LogFunctions) => {
   await fs.ensureDir(dir)
 
   await log.step('Téléchargement du fichier')
@@ -126,11 +127,11 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
  * @param log       Log system that is displayed on the user interface
  * @returns Dictionary of available layer structures (id: {name, fields, featureCount})
  */
-const extraction = async (tmpFile, log) => {
+const extraction = async (tmpFile : string, log : LogFunctions) => {
   await log.step('Récupération de la structure des données')
 
   // Display layers
-  const result = await execute(`ogrinfo -json ${tmpFile}`)
+  const result = await execute(`ogrinfo -json '${tmpFile}'`)
   if (shouldBeStopped) return
 
   const jsonStructure = await JSON.parse(result.stdout)
@@ -165,7 +166,7 @@ const extraction = async (tmpFile, log) => {
 
     // If there are no attributes (columns), it is considered unnecessary to retrieve the layer.
     if (layers[i].fields.length <= 0) {
-      await log.warn(`Couche ${i + 1} - ${layers[i].name} - Pas d'attributs, INUTILISABLE`)
+      await log.warning(`Couche ${i + 1} - ${layers[i].name} - Pas d'attributs, INUTILISABLE`)
     } else {
       await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
       layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount }
@@ -184,13 +185,13 @@ const extraction = async (tmpFile, log) => {
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  */
-const createDatasets = async (processingConfig, processingId, axios, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log) => {
+const createDatasets = async (processingConfig, processingId, axios : AxiosInstance, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
   await log.step('Construction des jeux de données')
 
   for (const idLayer of processingConfig.idsLayers) {
     if (shouldBeStopped) return
     if (!(idLayer in layersFieldList)) {
-      await log.warn(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
+      await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
     } else {
       await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 

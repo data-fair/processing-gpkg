@@ -1,3 +1,6 @@
+import type { LogFunctions } from '@data-fair/lib-common-types/processings.js'
+import type { AxiosInstance } from 'axios'
+
 import { spawn } from 'child_process'
 
 /**
@@ -15,10 +18,14 @@ const BATCH_SIZE = 1000
  * @param log                 Log system that is displayed on the user interface
  * @param isStopped           Function allowing the program to stop if requested
  */
-export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios, log, isStopped: () => boolean) => {
+export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : AxiosInstance, log : LogFunctions, isStopped: () => boolean) => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
+
+  const progressName = `Envoi des données - ${layerName}`
+  await log.task(progressName)
+  await log.progress(progressName, 0, layerFeatureCount)
 
   // Function to clear the batch array and sends the data it contained
   const flushBatch = async () => {
@@ -26,7 +33,8 @@ export const streamLayerToDataset = async (tmpFile: string, layerName: string, l
     const toSend = batch.splice(0)
     total += toSend.length
     await axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend)
-    await log.progress(`   Envoi des données - ${layerName}`, total, layerFeatureCount)
+
+    await log.progress(progressName, total, layerFeatureCount)
   }
 
   // Launch a child process to retrieve the data
