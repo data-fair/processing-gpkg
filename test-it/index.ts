@@ -38,7 +38,7 @@ describe('Geopackage processing', () => {
     // assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
 
-    execute('rm ../test-data/file')
+    await execute('rm ../test-data/file')
   })
 
   it('should run a task with a zip file', async function () {
@@ -57,6 +57,6 @@ describe('Geopackage processing', () => {
     // assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-zip')
 
-    execute('rm -r ../test-data/file ../test-data/file-unzip')
+    await execute('rm -r ../test-data/file ../test-data/file-unzip')
   })
 })
