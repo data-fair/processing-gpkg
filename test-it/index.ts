@@ -23,8 +23,6 @@ describe('Geopackage processing', () => {
   })
 
   it('should run a task with a gpkg file', async function () {
-    execute('mkdir ../test-data')
-
     const context = testUtils.context({
       pluginConfig: {},
       processingConfig: {
@@ -40,12 +38,10 @@ describe('Geopackage processing', () => {
     // assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
 
-    execute('rm -r ../test-data')
+    execute('rm ../test-data/file')
   })
 
   it('should run a task with a zip file', async function () {
-    execute('mkdir ../test-data')
-
     const context = testUtils.context({
       pluginConfig: {},
       processingConfig: {
@@ -61,6 +57,6 @@ describe('Geopackage processing', () => {
     // assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-zip')
 
-    execute('rm -r ../test-data')
+    execute('rm -r ../test-data/file ../test-data/file-unzip')
   })
 })
