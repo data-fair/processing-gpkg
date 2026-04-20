@@ -3,13 +3,9 @@ import { strict as assert } from 'node:assert'
 import { it, describe } from 'node:test'
 import testUtils from '@data-fair/lib-processing-dev/tests-utils.js'
 import * as gpkgPlugin from '../index.ts'
-import { exec } from 'child_process'
-import util from 'util'
 
 import pluginConfigSchema from '../plugin-config-schema.json' with { type: 'json' }
 import processingConfigSchema from '../processing-config-schema.json' with { type: 'json' }
-
-const execute = util.promisify(exec)
 
 describe('Geopackage processing', () => {
   // Each plugins should expose a plugin config schema and a processing config schema
@@ -37,8 +33,6 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
     // assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
-
-    await execute('rm ../test-data/file')
   })
 
   it('should run a task with a zip file', async function () {
@@ -56,7 +50,5 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
     // assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-zip')
-
-    await execute('rm -r ../test-data/file ../test-data/file-unzip')
   })
 })
