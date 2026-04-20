@@ -13,8 +13,9 @@ const BATCH_SIZE = 1000
  * @param datasetId           Identifier of the dataset to which the data is sent
  * @param axios               Server for API requests
  * @param log                 Log system that is displayed on the user interface
+ * @param isStopped           Function allowing the program to stop if requested
  */
-export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios, log) => {
+export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios, log, isStopped: () => boolean) => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
@@ -41,6 +42,7 @@ export const streamLayerToDataset = async (tmpFile: string, layerName: string, l
   const procClosed = new Promise<number>((resolve) => {
     proc.on('close', (code) => {
       resolve(code ?? 0)
+      if (isStopped()) resolve(1)
     })
   })
   proc.on('error', (err) => { throw err })
@@ -51,6 +53,8 @@ export const streamLayerToDataset = async (tmpFile: string, layerName: string, l
 
   // Analysis chunk by chunk; a chunk corresponds to a piece of data, not necessarily a complete line
   for await (const chunk of proc.stdout) {
+    if (isStopped()) return
+
     // Text accumulation
     textBuffer += chunk.toString()
     const lines = textBuffer.split('\n')
@@ -77,6 +81,7 @@ export const streamLayerToDataset = async (tmpFile: string, layerName: string, l
       }
     }
   }
+  if (isStopped()) return
 
   // If there is still data after the read loop (remaining line without \n), we retrieve it and add it.
   if (textBuffer.trim()) {
@@ -90,6 +95,7 @@ export const streamLayerToDataset = async (tmpFile: string, layerName: string, l
 
   // We send the remaining data, features that have not reached BATCH_SIZE
   await flushBatch()
+  if (isStopped()) return
 
   // We wait for the command to finish and then check the exit code.
   const exitCode = await procClosed

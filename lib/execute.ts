@@ -12,17 +12,27 @@ import { streamLayerToDataset } from './stream-layer.ts'
 const execute = util.promisify(exec)
 
 /**
+ * Allows for a requested program shutdown to be scheduled.
+ */
+let shouldBeStopped = false
+
+export const stop: () => Promise<void> = async () => { shouldBeStopped = true }
+/**
  * Input function, allows data processing to begin
  * @param context Context of the request
  */
 export const run: RunFunction<ProcessingConfig> = async (context) => {
+  shouldBeStopped = false
+
   // Retrieving the contextual elements necessary for processing
   const { processingConfig, processingId, secrets, tmpDir, axios, log } = context
   try {
     const tmpFile = await download(processingConfig, secrets, tmpDir, axios, log)
 
+    if (shouldBeStopped) return
     const layersFieldList = await extraction(tmpFile, log)
 
+    if (shouldBeStopped) return
     // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
     if (!processingConfig.idsLayers || processingConfig.idsLayers.length <= 0) {
       await log.debug('Pas de couches renseignées')
@@ -51,16 +61,20 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
   await log.step('Téléchargement du fichier')
   let tmpFile = path.join(dir, 'file')
   await fs.ensureFile(tmpFile)
+  if (shouldBeStopped) return
 
   let filename = decodeURIComponent(path.parse(processingConfig.url).base)
+  if (shouldBeStopped) return
 
   filename = await fetchHTTP(processingConfig, secrets, tmpFile, axios) || filename
+  if (shouldBeStopped) return
 
   // Try to prevent weird bug with NFS by forcing syncing file before reading it
   const fd = await fs.open(tmpFile, 'r')
   await fs.fsync(fd)
   await fs.close(fd)
   await log.info(`Le fichier a été téléchargé (${filename})`)
+  if (shouldBeStopped) return
 
   let gpkgFilename
 
@@ -83,6 +97,7 @@ const download = async (processingConfig, secrets, dir, axios, log) => {
       })
 
     const nbFichiers = filesGpkg.length
+    if (shouldBeStopped) return
 
     if (nbFichiers <= 0) {
       throw new Error('Il n\' y a pas de fichiers .gpkg à traiter dans ce zip.')
@@ -116,14 +131,17 @@ const extraction = async (tmpFile, log) => {
 
   // Display layers
   const result = await execute(`ogrinfo -json ${tmpFile}`)
+  if (shouldBeStopped) return
 
   const jsonStructure = await JSON.parse(result.stdout)
+  if (shouldBeStopped) return
 
   const layers = jsonStructure.layers
   const layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } } = []
 
   for (let i = 0; i < layers.length; i++) {
     for (let j = 0; j < layers[i].fields.length; j++) {
+      if (shouldBeStopped) return
       let typeCorrect = layers[i].fields[j].type.toLowerCase()
 
       // Check the types
@@ -170,6 +188,7 @@ const createDatasets = async (processingConfig, processingId, axios, layersField
   await log.step('Construction des jeux de données')
 
   for (const idLayer of processingConfig.idsLayers) {
+    if (shouldBeStopped) return
     if (!(idLayer in layersFieldList)) {
       await log.warn(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
     } else {
@@ -189,10 +208,11 @@ const createDatasets = async (processingConfig, processingId, axios, layersField
         schema: fields,
         extras: { processingId }
       })).data
-      await log.info(`   Jeu de donnée créé, id="${dataset.id}", titre="${dataset.title}"`)
+      await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
 
+      if (shouldBeStopped) return
       // Dataset population
-      await streamLayerToDataset(tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log)
+      await streamLayerToDataset(tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
 
       await log.info('Jeu de données complet')
       await log.info('')
