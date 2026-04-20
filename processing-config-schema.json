@@ -8,13 +8,22 @@
     {
       "title": "Liste de jeux de données",
       "default": {
-        "datasetMode": "create",
+        "datasetMode": "list",
         "dataset": {
-          "id": "",
-          "title": ""
+          "prefix": ""
         }
       },
       "oneOf": [
+        {
+          "title" : "Lister les jeux de données",
+          "properties": {
+            "datasetMode": {
+              "type": "string",
+              "const": "list",
+              "title": "Action"
+            }
+          }
+        },
         {
           "title": "Créer des jeux de données éditables",
           "required": [
@@ -23,8 +32,7 @@
           "properties": {
             "datasetMode": {
               "type": "string",
-              "const": "create",
-              "title": "Action"
+              "const": "create"
             },
             "dataset": {
               "type": "object",
@@ -35,7 +43,64 @@
                 "prefix": {
                   "type": "string",
                   "title": "Préfixe des noms des jeux de données",
-                  "description": "Les titres des jeux de données sont construits avec ce préfixe et le nom de la couhe correspondante."
+                  "description": "Les titres des jeux de données sont construits avec ce préfixe et le nom de la couche correspondante."
+                }
+              }
+            }
+          }
+        },
+        {
+          "title": "Mettre à jour des jeux de données",
+          "properties": {
+            "datasetMode": {
+              "type": "string",
+              "const": "update"
+            },
+            "datasets": {
+              "type": "array",
+              "title": "Jeux à mettre à jour",
+              "items": {
+                "type" : "object",
+                "required": [
+                  "dataset",
+                  "idLayer"
+                ],
+                "properties": {
+                  "dataset": {
+                    "type": "object",
+                    "title": "Jeu de données existant",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "title": "Identifiant"
+                      },
+                      "href": {
+                        "type": "string",
+                        "title": "URL"
+                      },
+                      "title": {
+                        "type": "string",
+                        "title": "Titre"
+                      }
+                    },
+                    "layout": {
+                      "getItems": {
+                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&${context.ownerFilter}",
+                        "itemsResults": "data.results",
+                        "itemTitle": "item.title",
+                        "itemKey": "item.id"
+                      }
+                    }
+                  },
+                  "idLayer": {
+                    "type": "integer",
+                    "title": "Numéro de la couche",
+                    "minimum": 1
+                  },
+                  "forceUpdate": {
+                    "type" : "boolean",
+                    "title" : "Forcer la mise à jour du schéma"
+                  }
                 }
               }
             }
@@ -61,7 +126,10 @@
             "type": "integer",
             "minimum": 1
           },
-          "description": "Les nombres à indiquer correspondent aux numéros des couches à extraire. Ne rien indiquer affichera seulement les couches disponibles sans les extraire."
+          "description": "Les nombres à indiquer correspondent aux numéros des couches à extraire.",
+          "layout": {
+            "if" : "parent.parent.data.datasetMode === 'create'"
+          }
         }
       }
     }

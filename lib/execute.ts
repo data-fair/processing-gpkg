@@ -26,7 +26,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
 
   // Retrieving the contextual elements necessary for processing
-  const { processingConfig, processingId, secrets, tmpDir, axios, log } = context
+  const { processingConfig, processingId, secrets, tmpDir, axios, log, patchConfig } = context
   try {
     const tmpFile = await download(processingConfig, secrets, tmpDir, axios, log)
 
@@ -34,11 +34,16 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
     const layersFieldList = await extraction(tmpFile, log)
 
     if (shouldBeStopped) return
-    // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
-    if (!processingConfig.idsLayers || processingConfig.idsLayers.length <= 0) {
-      await log.debug('Pas de couches renseignées')
-    } else {
+
+    if (processingConfig.datasetMode === 'create') {
       await createDatasets(processingConfig, processingId, axios, layersFieldList, tmpFile, log)
+    } else if (processingConfig.datasetMode === 'update') {
+      await updateDatasets(processingConfig, axios, layersFieldList, tmpFile, log)
+    } else {
+      await log.info('Changement list -> create')
+      await patchConfig({ datasetMode: 'create', prefix: 'truc' })
+
+      // await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
     }
   } catch (err) {
     log.error(`Erreur :  ${err} `)
@@ -188,6 +193,12 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
 const createDatasets = async (processingConfig, processingId, axios : AxiosInstance, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
   await log.step('Construction des jeux de données')
 
+  // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
+  if (!processingConfig.idsLayers || processingConfig.idsLayers.length <= 0) {
+    await log.info('Pas de couches renseignées')
+    return
+  }
+
   for (const idLayer of processingConfig.idsLayers) {
     if (shouldBeStopped) return
     if (!(idLayer in layersFieldList)) {
@@ -217,8 +228,70 @@ const createDatasets = async (processingConfig, processingId, axios : AxiosInsta
 
       await log.info('Jeu de données complet')
       await log.info('')
-
-      // await patchConfig({ datasetMode: 'update', dataset: { id: dataset.id, title: dataset.title } })
     }
   }
+}
+
+const updateDatasets = async (processingConfig, axios : AxiosInstance, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
+  await log.step('Mise à jour des jeux de données')
+
+  // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
+  if (!processingConfig.datasets || processingConfig.datasets.length <= 0) {
+    await log.info('Pas de mise à jour renseignées')
+    return
+  }
+  for (const update of processingConfig.datasets) {
+    const dataset = update.dataset
+    const idLayer = update.idLayer
+    await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer}`)
+
+    if (!(idLayer in layersFieldList)) {
+      await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
+      continue
+    }
+
+    const datasetInfo = await axios.get(`api/v1/datasets/${dataset.id}`)
+    const datasetSchema = datasetInfo.data.schema
+
+    if (update.forceUpdate) {
+      await log.info('Mise à jour forcée du schéma')
+
+      // Drop the old data
+      await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+
+      // Sleep to allow the dataset time to update properly in order to avoid potential conflicts
+      await sleep(10000)
+
+      // Update the schema
+      await axios.post(`api/v1/datasets/${dataset.id}`, {
+        schema: layersFieldList[idLayer].fields
+      })
+    } else {
+      for (const field of layersFieldList[idLayer].fields) {
+        let find = false
+        for (const datasetField of datasetSchema) {
+          if (datasetField.name === field.name && datasetField.type === field.type) {
+            find = true
+            break
+          }
+        }
+        if (!find) {
+          throw new Error(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
+        }
+
+        // Drop the old data
+        await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+      }
+    }
+
+    await log.info('Reset du jeu et envoi des nouvelles données')
+
+    await streamLayerToDataset(tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped, dataset.title)
+  }
+}
+
+function sleep (ms : number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }

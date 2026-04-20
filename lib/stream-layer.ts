@@ -17,13 +17,14 @@ const BATCH_SIZE = 1000
  * @param axios               Server for API requests
  * @param log                 Log system that is displayed on the user interface
  * @param isStopped           Function allowing the program to stop if requested
+ * @param datasetName         Dataset name, empty by default (use for update)
  */
-export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : AxiosInstance, log : LogFunctions, isStopped: () => boolean) => {
+export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : AxiosInstance, log : LogFunctions, isStopped: () => boolean, datasetName : string = '') => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
 
-  const progressName = `Envoi des données - ${layerName}`
+  const progressName = `Envoi des données ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}`
   await log.task(progressName)
   await log.progress(progressName, 0, layerFeatureCount)
 
