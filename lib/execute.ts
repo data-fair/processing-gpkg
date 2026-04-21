@@ -306,24 +306,11 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
         // Check if the schemas match.
         await log.info('Vérification de la compatibilité des schémas')
 
+        // We don't establish equality in both directions because of the attributes added during the processing of the dataset, such as the update date, for example.
         for (const field of layersFieldList[idLayer].fields) {
           if (shouldBeStopped) return
           let find = false
           for (const datasetField of datasetSchema) {
-            if (shouldBeStopped) return
-            if (datasetField.name === field.name && datasetField.type === field.type) {
-              find = true
-              break
-            }
-          }
-          if (!find) {
-            throw new Error('Non compatibilité des schémas')
-          }
-        }
-        for (const datasetField of datasetSchema) {
-          if (shouldBeStopped) return
-          let find = false
-          for (const field of layersFieldList[idLayer].fields) {
             if (shouldBeStopped) return
             if (datasetField.name === field.name && datasetField.type === field.type) {
               find = true
