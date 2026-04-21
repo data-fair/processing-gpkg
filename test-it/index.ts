@@ -7,6 +7,10 @@ import * as gpkgPlugin from '../index.ts'
 import pluginConfigSchema from '../plugin-config-schema.json' with { type: 'json' }
 import processingConfigSchema from '../processing-config-schema.json' with { type: 'json' }
 
+/**
+ * Used to test the list of sofas in a file and the correct creation of datasets from a file.
+ * We do not test the update because we cannot retrieve the necessary information for the test.
+ */
 describe('Geopackage processing', () => {
   // Each plugins should expose a plugin config schema and a processing config schema
 
@@ -16,6 +20,19 @@ describe('Geopackage processing', () => {
 
   it('should expose a processing config schema for users', async () => {
     assert.equal(processingConfigSchema.type, 'object')
+  })
+
+  it('should display the layers of a gpkg file', async () => {
+    const context = testUtils.context({
+      pluginConfig: {},
+      processingConfig: {
+        datasetMode: 'list',
+        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
+      },
+      tmpDir: 'test-data/'
+    }, config, false)
+
+    await gpkgPlugin.run(context)
   })
 
   it('should run a task with a gpkg file', async function () {
@@ -31,10 +48,11 @@ describe('Geopackage processing', () => {
     }, config, false)
 
     await gpkgPlugin.run(context)
-    // assert.equal(context.processingConfig.datasetMode, 'update')
+    assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
   })
 
+  // WARNING: Be sure to delete the contents of test-data before running this test. Otherwise, the unzipping process will loop.
   it('should run a task with a zip file', async function () {
     const context = testUtils.context({
       pluginConfig: {},
@@ -48,7 +66,7 @@ describe('Geopackage processing', () => {
     }, config, false)
 
     await gpkgPlugin.run(context)
-    // assert.equal(context.processingConfig.datasetMode, 'update')
+    assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-zip')
   })
 })
