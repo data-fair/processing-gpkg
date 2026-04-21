@@ -1,16 +1,13 @@
-import type { RunFunction, LogFunctions } from '@data-fair/lib-common-types/processings.js'
+import type { RunFunction, LogFunctions, DataFairWsClient } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
 import type { AxiosInstance } from 'axios'
 
-import { exec } from 'child_process'
-import util from 'util'
+import { spawn } from 'child_process'
 import fs from 'fs-extra'
 import * as path from 'path'
 
 import { fetchHTTP } from './fetch.ts'
 import { streamLayerToDataset } from './stream-layer.ts'
-
-const execute = util.promisify(exec)
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -26,7 +23,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
 
   // Retrieving the contextual elements necessary for processing
-  const { processingConfig, processingId, secrets, tmpDir, axios, log, patchConfig } = context
+  const { processingConfig, processingId, secrets, tmpDir, axios, log, patchConfig, ws } = context
   const tmpFile = await download(processingConfig, secrets, tmpDir, axios, log)
 
   if (shouldBeStopped) return
@@ -36,9 +33,9 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
 
   if (processingConfig.datasetMode === 'create') {
     const updateConfig = await createDatasets(processingConfig, processingId, axios, layersFieldList, tmpFile, log)
-    if (updateConfig) await patchConfig({ datasetMode: 'update', datasets: updateConfig })
+    if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig })
   } else if (processingConfig.datasetMode === 'update') {
-    await updateDatasets(processingConfig, axios, layersFieldList!, tmpFile!, log)
+    await updateDatasets(processingConfig, axios, layersFieldList!, tmpFile!, log, ws)
   } else {
     await patchConfig({ datasetMode: 'create', dataset: { prefix: '' } })
   }
@@ -54,7 +51,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
  * @param log               Log system that is displayed on the user interface
  * @returns Full path of the file to be processed
  */
-const download = async (processingConfig, secrets, dir : string, axios : AxiosInstance, log : LogFunctions) => {
+const download = async (processingConfig : ProcessingConfig, secrets, dir : string, axios : AxiosInstance, log : LogFunctions) => {
   await fs.ensureDir(dir)
 
   await log.step('Téléchargement du fichier')
@@ -82,31 +79,39 @@ const download = async (processingConfig, secrets, dir : string, axios : AxiosIn
     await log.info(`Dézippage du fichier ${filename}`)
 
     // Unzip
-    await execute(`unzip -j ${tmpFile} -d ${tmpFile}-dezip`)
+    const proc = spawn('unzip', [tmpFile, '-d', `${tmpFile}-dezip`])
+    let result = ''
+    for await (const chunk of proc.stdout) {
+      result += chunk.toString()
+    }
+
+    if (result.length <= 0) {
+      throw new Error('Erreur au niveau du dézippage')
+    }
 
     // We are looking for the .gpkg files contained in the .zip file.
     const filesGpkg: string[] = []
     await fs.readdir(`${tmpFile}-dezip`)
       .then((files) => {
-        files.forEach(async file => {
+        for (const file of files) {
           if (file.endsWith('.gpkg')) {
             filesGpkg.push(`${tmpFile}-dezip/${file}`)
           }
-        })
+        }
       })
 
     const nbFichiers = filesGpkg.length
     if (shouldBeStopped) return
 
     if (nbFichiers <= 0) {
-      throw new Error('Il n\' y a pas de fichiers .gpkg à traiter dans ce zip.')
+      throw new Error('Il n\'y a pas de fichiers .gpkg à traiter dans ce zip.')
     } else {
       // We keep the first .gpkg file we find, we ignore the others
       const tabSplit = filesGpkg[0].split('/')
       gpkgFilename = tabSplit[tabSplit.length - 1]
       tmpFile = filesGpkg[0]
     }
-  } else if (filename.endsWith('gpkg')) {
+  } else if (filename.endsWith('.gpkg')) {
     await log.info('Récupération du fichier gpkg')
     gpkgFilename = filename
   } else {
@@ -129,14 +134,20 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
   await log.step('Récupération de la structure des données')
 
   // Display layers
-  const result = await execute(`ogrinfo -json '${tmpFile}'`)
+  const proc = spawn('ogrinfo', ['-json', tmpFile])
+  let result = ''
   if (shouldBeStopped) return
 
-  const jsonStructure = await JSON.parse(result.stdout)
+  for await (const chunk of proc.stdout) {
+    if (shouldBeStopped) return
+    result += chunk.toString()
+  }
+
+  const jsonStructure = await JSON.parse(result)
   if (shouldBeStopped) return
 
   const layers = jsonStructure.layers
-  const layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } } = []
+  const layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } } = []
 
   for (let i = 0; i < layers.length; i++) {
     for (let j = 0; j < layers[i].fields.length; j++) {
@@ -184,7 +195,7 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
  * @param log               Log system that is displayed on the user interface
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async (processingConfig, processingId, axios : AxiosInstance, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
+const createDatasets = async (processingConfig : ProcessingConfig, processingId, axios : AxiosInstance, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
   await log.step('Construction des jeux de données')
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
@@ -237,17 +248,6 @@ const createDatasets = async (processingConfig, processingId, axios : AxiosInsta
 }
 
 /**
- * Allows you to pause a program, used to allow the dataset to update properly.
- * @param ms  Time in milliseconds
- * @returns   Promise to pause
- */
-function sleep (ms : number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
-  })
-}
-
-/**
  * Allows updating a dataset, either by force (schema reset) or by non-force (data replacement).
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param axios             Server for API requests
@@ -256,7 +256,7 @@ function sleep (ms : number) {
  * @param log               Log system that is displayed on the user interface
  * @returns   Returns nothing, used to stop the program
  */
-const updateDatasets = async (processingConfig, axios : AxiosInstance, layersFieldList: { [username: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
+const updateDatasets = async (processingConfig : ProcessingConfig, axios : AxiosInstance, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions, ws : DataFairWsClient) => {
   await log.step('Mise à jour des jeux de données')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
@@ -293,8 +293,8 @@ const updateDatasets = async (processingConfig, axios : AxiosInstance, layersFie
       await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
       if (shouldBeStopped) return
 
-      // Sleep to allow the dataset time to update properly in order to avoid potential conflicts
-      await sleep(10000)
+      // We are waiting for the dataset to finish processing.
+      await ws.waitForJournal(dataset.id, 'finalize-end')
 
       // Update the schema
       await axios.post(`api/v1/datasets/${dataset.id}`, {
@@ -305,6 +305,7 @@ const updateDatasets = async (processingConfig, axios : AxiosInstance, layersFie
       try {
         // Check if the schemas match.
         await log.info('Vérification de la compatibilité des schémas')
+
         for (const field of layersFieldList[idLayer].fields) {
           if (shouldBeStopped) return
           let find = false
@@ -318,11 +319,25 @@ const updateDatasets = async (processingConfig, axios : AxiosInstance, layersFie
           if (!find) {
             throw new Error('Non compatibilité des schémas')
           }
-
-          // Drop the old data
-          if (shouldBeStopped) return
-          await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
         }
+        for (const datasetField of datasetSchema) {
+          if (shouldBeStopped) return
+          let find = false
+          for (const field of layersFieldList[idLayer].fields) {
+            if (shouldBeStopped) return
+            if (datasetField.name === field.name && datasetField.type === field.type) {
+              find = true
+              break
+            }
+          }
+          if (!find) {
+            throw new Error('Non compatibilité des schémas')
+          }
+        }
+
+        // Drop the old data
+        if (shouldBeStopped) return
+        await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
       } catch (err) {
         // Instead of triggering an error, we issue a warning to allow subsequent updates to proceed.
         await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)

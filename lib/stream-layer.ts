@@ -52,7 +52,6 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   const procClosed = new Promise<number>((resolve) => {
     proc.on('close', (code) => {
       resolve(code ?? 0)
-      if (isStopped()) resolve(1)
     })
   })
   proc.on('error', (err) => { throw err })
