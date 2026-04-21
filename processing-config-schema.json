@@ -8,14 +8,11 @@
     {
       "title": "Liste de jeux de données",
       "default": {
-        "datasetMode": "list",
-        "dataset": {
-          "prefix": ""
-        }
+        "datasetMode": "list"
       },
       "oneOf": [
         {
-          "title" : "Lister les jeux de données",
+          "title" : "Lister les différentes couches",
           "properties": {
             "datasetMode": {
               "type": "string",
@@ -32,7 +29,8 @@
           "properties": {
             "datasetMode": {
               "type": "string",
-              "const": "create"
+              "const": "create",
+              "title": "Action"
             },
             "dataset": {
               "type": "object",
@@ -54,7 +52,8 @@
           "properties": {
             "datasetMode": {
               "type": "string",
-              "const": "update"
+              "const": "update",
+              "title": "Action"
             },
             "datasets": {
               "type": "array",

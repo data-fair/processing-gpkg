@@ -10,6 +10,7 @@ const BATCH_SIZE = 1000
 
 /**
  * Allows sending data to the corresponding dataset in batches.
+ * @param idStream            Stream ID for displaying progress
  * @param tmpFile             Full path of the file to be processed
  * @param layerName           Name of the layer from which the data is extracted
  * @param layerFeatureCount   Number of rows of data to extract
@@ -19,12 +20,12 @@ const BATCH_SIZE = 1000
  * @param isStopped           Function allowing the program to stop if requested
  * @param datasetName         Dataset name, empty by default (use for update)
  */
-export const streamLayerToDataset = async (tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : AxiosInstance, log : LogFunctions, isStopped: () => boolean, datasetName : string = '') => {
+export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : AxiosInstance, log : LogFunctions, isStopped: () => boolean, datasetName : string = '') => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
 
-  const progressName = `Envoi des données ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}`
+  const progressName = `${idStream}. Envoi des données ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}`
   await log.task(progressName)
   await log.progress(progressName, 0, layerFeatureCount)
 
