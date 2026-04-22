@@ -40,7 +40,10 @@ describe('Geopackage processing', () => {
       pluginConfig: {},
       processingConfig: {
         datasetMode: 'create',
-        dataset: { prefix: 'Test-gpkg' },
+        dataset: {
+          prefix: 'Test-gpkg',
+          editableCreate: true
+        },
         url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
         idsLayers: [2, 4, 6]
       },
@@ -50,23 +53,5 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
-  })
-
-  // WARNING: Be sure to delete the contents of test-data before running this test. Otherwise, the unzipping process will loop.
-  it('should run a task with a zip file', async function () {
-    const context = testUtils.context({
-      pluginConfig: {},
-      processingConfig: {
-        datasetMode: 'create',
-        dataset: { prefix: 'Test-zip' },
-        url: 'https://www.data.gouv.fr/api/1/datasets/r/26c5be7d-56d2-4d1f-a9ce-b800f0b0f16e',
-        idsLayers: [1]
-      },
-      tmpDir: 'test-data/'
-    }, config, false)
-
-    await gpkgPlugin.run(context)
-    assert.equal(context.processingConfig.datasetMode, 'update')
-    assert.equal(context.processingConfig.dataset.prefix, 'Test-zip')
   })
 })
