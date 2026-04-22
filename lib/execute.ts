@@ -37,10 +37,10 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   if (shouldBeStopped) return
 
   if (processingConfig.datasetMode === 'create') {
-    const updateConfig = await createDatasets(processingConfig, processingId, axios, tmpDir, layersFieldList!, tmpFile!, log)
+    const updateConfig = await createDatasets(processingConfig, processingId, axios, tmpDir, layersFieldList!, tmpFile!, log, ws)
     if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate })
   } else if (processingConfig.datasetMode === 'update') {
-    await updateDatasets(processingConfig, axios, layersFieldList!, tmpFile!, log, ws)
+    await updateDatasets(processingConfig, axios, tmpDir, layersFieldList!, tmpFile!, log, ws)
   } else {
     await patchConfig({ datasetMode: 'create', dataset: { prefix: '' } })
   }
@@ -191,6 +191,7 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
     // Adding geometries
     layers[i].fields.push({
       title: 'geometry',
+      name: 'geometry',
       key: 'geometry',
       type: 'string',
       'x-refersTo': 'https://purl.org/geojson/vocab#geometry',
@@ -215,9 +216,10 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
  * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
+ * @param ws                Data Fair's Websocket allows retrieving the dataset response.
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async (processingConfig : ProcessingConfig, processingId : string, axios : AxiosInstance, dir: string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log: LogFunctions) => {
+const createDatasets = async (processingConfig : ProcessingConfig, processingId : string, axios : AxiosInstance, dir: string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log: LogFunctions, ws : DataFairWsClient) => {
   await log.step('Construction des jeux de données')
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
@@ -261,8 +263,6 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId 
         // Dataset population
         idStream += 1
         await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
-
-        await log.info('Jeu de données complet')
       } else {
         const tmpFileGeoJSON = await createTmpFile(dir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
 
@@ -289,6 +289,10 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId 
 
       if (shouldBeStopped) return
 
+      // We are waiting for the dataset to finish processing.
+      await ws.waitForJournal(dataset.id, 'finalize-end')
+      await log.info('Jeu de données complet')
+
       const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
       const updateObject = { dataset: datasetObject, idLayer }
       updateConfig.push(updateObject)
@@ -302,13 +306,14 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId 
  * Allows updating a dataset, either by force (schema reset) or by non-force (data replacement).
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param axios             Server for API requests
+ * @param dir               Directory where to download temporary files
  * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  * @param ws                Data Fair's Websocket allows retrieving the dataset response.
  * @returns   Returns nothing, used to stop the program
  */
-const updateDatasets = async (processingConfig : ProcessingConfig, axios : AxiosInstance, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions, ws : DataFairWsClient) => {
+const updateDatasets = async (processingConfig : ProcessingConfig, axios : AxiosInstance, dir : string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions, ws : DataFairWsClient) => {
   await log.step('Mise à jour des jeux de données')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
@@ -318,6 +323,12 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
   }
 
   let idStream = 0
+  const datasets = (await axios.get(`api/v1/datasets/?${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
+  const datasetsId = []
+  for (const dataset of datasets) {
+    datasetsId.push(dataset.id)
+  }
+  console.log('Datasets : ', datasetsId)
 
   // We process each dataset to be updated
   for (const update of processingConfig.datasets) {
@@ -325,11 +336,19 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
 
     const dataset = update.dataset
     const idLayer = update.idLayer
+    const formData = new FormData()
+
     await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer}`)
 
     // Check if the layer is available
     if (!(idLayer in layersFieldList)) {
       await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
+      await log.info('')
+      continue
+    }
+
+    if (!(dataset.id in datasetsId)) {
+      await log.warning(`Le jeu de données ${dataset.title} n'est pas de type ${processingConfig.editableUpdate ? 'éditable' : 'fichier'}`)
       await log.info('')
       continue
     }
@@ -341,30 +360,34 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
     if (update.forceUpdate) {
       await log.info('Mise à jour forcée du schéma')
 
-      // Drop the old data
-      await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
-      if (shouldBeStopped) return
+      if (processingConfig.editableUpdate) {
+        // Drop the old data
+        await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+        if (shouldBeStopped) return
 
-      // We are waiting for the dataset to finish processing.
-      await ws.waitForJournal(dataset.id, 'finalize-end')
+        // We are waiting for the dataset to finish processing.
+        await ws.waitForJournal(dataset.id, 'finalize-end')
 
-      // Update the schema
-      await axios.post(`api/v1/datasets/${dataset.id}`, {
-        schema: layersFieldList[idLayer].fields
-      })
-      if (shouldBeStopped) return
+        // Update the schema
+        await axios.post(`api/v1/datasets/${dataset.id}`, {
+          schema: layersFieldList[idLayer].fields
+        })
+        if (shouldBeStopped) return
+      } else {
+        formData.append('schema', JSON.stringify(layersFieldList[idLayer].fields))
+      }
     } else {
       try {
         // Check if the schemas match.
         await log.info('Vérification de la compatibilité des schémas')
 
         // We don't establish equality in both directions because of the attributes added during the processing of the dataset, such as the update date, for example.
-        for (const field of layersFieldList[idLayer].fields) {
+        for await (const field of layersFieldList[idLayer].fields) {
           if (shouldBeStopped) return
           let find = false
-          for (const datasetField of datasetSchema) {
+          for await (const datasetField of datasetSchema) {
             if (shouldBeStopped) return
-            if (datasetField.name === field.name && datasetField.type === field.type) {
+            if (datasetField.key === field.key && datasetField.type === field.type) {
               find = true
               break
             }
@@ -376,7 +399,7 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
 
         // Drop the old data
         if (shouldBeStopped) return
-        await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+        if (processingConfig.editableUpdate) await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
       } catch (err) {
         // Instead of triggering an error, we issue a warning to allow subsequent updates to proceed.
         await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
@@ -386,8 +409,30 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
     }
 
     // Data update
-    idStream += 1
-    await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped, dataset.title)
+    if (processingConfig.editableUpdate) {
+      idStream += 1
+      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped, dataset.title)
+    } else {
+      const tmpFileGeoJSON = await createTmpFile(dir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+      formData.append('file', await fs.createReadStream(tmpFileGeoJSON!), { filename: path.parse(tmpFileGeoJSON!).base })
+      formData.getLength = util.promisify(formData.getLength)
+      const contentLength = await formData.getLength()
+      await log.info(`Chargement de ${formatBytes(contentLength!)}`)
+
+      if (shouldBeStopped) return
+
+      await axios({
+        method: 'post',
+        url: `api/v1/datasets/${dataset.id}`,
+        data: formData,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        headers: { ...formData.getHeaders(), 'content-length': contentLength }
+      })
+    }
+
+    // We are waiting for the dataset to finish processing.
+    await ws.waitForJournal(dataset.id, 'finalize-end')
 
     await log.info('Mise à jour complète')
     await log.info('')

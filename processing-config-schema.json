@@ -40,8 +40,8 @@
               "properties": {
                 "editableCreate": {
                   "type": "boolean",
-                  "title": "Jeu de données éditable",
-                  "description": "Par défaut, on crée un jeu de données fichier"
+                  "title": "Jeux de données éditables",
+                  "description": "Par défaut, on crée des jeux de données fichier, moins coûteux en mémoire, mais difficilement actualisables"
                 },
                 "prefix": {
                   "type": "string",
@@ -62,14 +62,37 @@
             },
             "editableUpdate": {
               "type": "boolean",
-              "title": "Jeu de données éditable",
-              "description": "Par défaut, on crée un jeu de données fichier"
+              "title": "Jeux de données éditables",
+              "description": "Par défaut, on met à jour des jeux de données fichier"
             },
             "datasets": {
               "type": "array",
               "title": "Jeux à mettre à jour",
+              "layout": {
+                "listEditMode": "inline"
+              },
               "items": {
                 "type" : "object",
+                  "layout" : [
+                    {
+                      "children": [
+                        "dataset"
+                      ],
+                      "cols": 5
+                    },
+                    {
+                      "children": [
+                        "idLayer"
+                      ],
+                      "cols": 3
+                    },
+                    {
+                      "children": [
+                        "forceUpdate"
+                      ],
+                      "cols": 3
+                    }
+                  ],
                 "required": [
                   "dataset",
                   "idLayer"
