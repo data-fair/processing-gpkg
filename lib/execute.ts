@@ -1,6 +1,7 @@
-import type { RunFunction, LogFunctions, DataFairWsClient } from '@data-fair/lib-common-types/processings.js'
+import type { RunFunction, DataFairWsClient, LogFunctions } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
 import type { AxiosInstance } from 'axios'
+import { formatBytes } from '@data-fair/lib-utils/format/bytes.js'
 
 import util from 'util'
 import { spawn } from 'child_process'
@@ -10,6 +11,7 @@ import FormData from 'form-data'
 
 import { fetchHTTP } from './fetch.ts'
 import { streamLayerToDataset } from './stream-layer.ts'
+import { createTmpFile } from './tmp-file.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -36,7 +38,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
 
   if (processingConfig.datasetMode === 'create') {
     const updateConfig = await createDatasets(processingConfig, processingId, axios, tmpDir, layersFieldList!, tmpFile!, log)
-    if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.editableCreate })
+    if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate })
   } else if (processingConfig.datasetMode === 'update') {
     await updateDatasets(processingConfig, axios, layersFieldList!, tmpFile!, log, ws)
   } else {
@@ -179,7 +181,7 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
       layers[i].fields[j] = {
         ...layers[i].fields[j],
         key: layers[i].fields[j].name,
-        type: typeCorrect
+        type: typeCorrect,
       }
       if (!layers[i].fields[j].type) {
         throw new Error(`Pas de type pour ${layers[i].fields[j].name}`)
@@ -204,15 +206,6 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
   return layersFieldList
 }
 
-function displayBytes (aSize) {
-  aSize = Math.abs(parseInt(aSize, 10))
-  if (aSize === 0) return '0 octets'
-  const def = [[1, 'octets'], [1000, 'ko'], [1000 * 1000, 'Mo'], [1000 * 1000 * 1000, 'Go'], [1000 * 1000 * 1000 * 1000, 'To'], [1000 * 1000 * 1000 * 1000 * 1000, 'Po']]
-  for (let i = 0; i < def.length; i++) {
-    if (aSize < def[i][0]) return (aSize / def[i - 1][0]).toLocaleString() + ' ' + def[i - 1][1]
-  }
-}
-
 /**
  * Allows you to create the requested layer datasets
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
@@ -224,7 +217,7 @@ function displayBytes (aSize) {
  * @param log               Log system that is displayed on the user interface
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async (processingConfig : ProcessingConfig, processingId, axios : AxiosInstance, dir: string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
+const createDatasets = async (processingConfig : ProcessingConfig, processingId : string, axios : AxiosInstance, dir: string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log: LogFunctions) => {
   await log.step('Construction des jeux de données')
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
@@ -250,9 +243,11 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId,
         await log.debug(`   Nom : ${field.key} - Type : ${field.type}`)
       }
 
+      let dataset
+
       if (processingConfig.dataset.editableCreate) {
         // Create the dataset, empty
-        const dataset = (await axios.post('api/v1/datasets', {
+        dataset = (await axios.post('api/v1/datasets', {
           title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
           description: '',
           isRest: true,
@@ -261,53 +256,27 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId,
         })).data
         await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
 
-        const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-        const updateObject = { dataset: datasetObject, idLayer }
-        updateConfig.push(updateObject)
-
         if (shouldBeStopped) return
+
         // Dataset population
         idStream += 1
         await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
 
         await log.info('Jeu de données complet')
       } else {
-        const tmpFileGeoJSON = path.join(dir, `${layersFieldList[idLayer].name}.geojson`)
-
-        if (!(await fs.exists(tmpFileGeoJSON))) {
-          await log.info('Création du fichier temporaire')
-
-          const proc = spawn('ogr2ogr', ['-f', 'GeoJSON', tmpFileGeoJSON, tmpFile, layersFieldList[idLayer].name])
-
-          const stderrChunks: Buffer[] = []
-          proc.stderr.on('data', (d: Buffer) => {
-            stderrChunks.push(d)
-          })
-
-          const procClosed = new Promise<number>((resolve) => {
-            proc.on('close', (code) => {
-              resolve(code ?? 0)
-            })
-          })
-
-          proc.on('error', (err) => { throw err })
-
-          const exitCode = await procClosed
-          if (exitCode !== 0) {
-            const stderr = Buffer.concat(stderrChunks).toString()
-            throw new Error(`ogr2ogr en échec avec le code ${exitCode}: ${stderr}`)
-          }
-        }
+        const tmpFileGeoJSON = await createTmpFile(dir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
 
         const formData = new FormData()
         formData.append('schema', JSON.stringify(fields))
         formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
-        formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
+        formData.append('file', await fs.createReadStream(tmpFileGeoJSON!), { filename: path.parse(tmpFileGeoJSON!).base })
         formData.getLength = util.promisify(formData.getLength)
         const contentLength = await formData.getLength()
-        await log.info(`Chargement de ${displayBytes(contentLength)}`)
+        await log.info(`Chargement de ${formatBytes(contentLength!)}`)
 
-        const dataset = (await axios({
+        if (shouldBeStopped) return
+
+        dataset = (await axios({
           method: 'post',
           url: 'api/v1/datasets',
           data: formData,
@@ -316,11 +285,13 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId,
           headers: { ...formData.getHeaders(), 'content-length': contentLength }
         })).data
         await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
-
-        const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-        const updateObject = { dataset: datasetObject, idLayer }
-        updateConfig.push(updateObject)
       }
+
+      if (shouldBeStopped) return
+
+      const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
+      const updateObject = { dataset: datasetObject, idLayer }
+      updateConfig.push(updateObject)
     }
     await log.info('')
   }
@@ -334,6 +305,7 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId,
  * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
+ * @param ws                Data Fair's Websocket allows retrieving the dataset response.
  * @returns   Returns nothing, used to stop the program
  */
 const updateDatasets = async (processingConfig : ProcessingConfig, axios : AxiosInstance, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions, ws : DataFairWsClient) => {

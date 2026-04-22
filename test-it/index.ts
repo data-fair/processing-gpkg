@@ -35,13 +35,13 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
   })
 
-  it('should run a task with a gpkg file', async function () {
+  it('should run a task with a gpkg file to create an edit dataset', async function () {
     const context = testUtils.context({
       pluginConfig: {},
       processingConfig: {
         datasetMode: 'create',
         dataset: {
-          prefix: 'Test-gpkg',
+          prefix: 'Test-edit-gpkg',
           editableCreate: true
         },
         url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
@@ -52,6 +52,52 @@ describe('Geopackage processing', () => {
 
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
+    assert.equal(context.processingConfig.dataset.prefix, 'Test-edit-gpkg')
+  })
+
+  // We've kept the file dataset test in the comments, as it's too large for local testing.
+  /**
+  it('should run a task with a gpkg file to create a file dataset', async function () {
+    const context = testUtils.context({
+      pluginConfig: {},
+      processingConfig: {
+        datasetMode: 'create',
+        dataset: {
+          prefix: 'Test-file-gpkg',
+          editableCreate: false
+        },
+        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
+        idsLayers: [2, 4, 6]
+      },
+      tmpDir: 'test-data/'
+    }, config, false)
+
+    await gpkgPlugin.run(context)
+    assert.equal(context.processingConfig.datasetMode, 'update')
+    assert.equal(context.processingConfig.dataset.prefix, 'Test-file-gpkg')
+  })
+  */
+
+  // We've kept the zip test in the comments, as it's too large for local testing.
+  /**
+  it('should run a task with a zip file', async function () {
+    const context = testUtils.context({
+      pluginConfig: {},
+      processingConfig: {
+        datasetMode: 'create',
+        dataset: {
+          prefix: 'Test-gpkg',
+          editableCreate: true
+        },
+        url: 'https://www.data.gouv.fr/api/1/datasets/r/26c5be7d-56d2-4d1f-a9ce-b800f0b0f16e',
+        idsLayers: [1]
+      },
+      tmpDir: 'test-data/'
+    }, config, false)
+
+    await gpkgPlugin.run(context)
+    assert.equal(context.processingConfig.datasetMode, 'update')
     assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
   })
+  */
 })

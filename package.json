@@ -1,7 +1,7 @@
 {
   "name": "@data-fair/processing-gpkg",
   "version": "0.0.0",
-  "description": "Create datasets from a geopackage (gpkg) file. Layers are selected by specifying them.",
+  "description": "Minimal plugin for data-fair-processings. Create one-line datasets on demand.",
   "main": "index.ts",
   "type": "module",
   "scripts": {
@@ -34,9 +34,7 @@
     "@data-fair/lib-common-types": "^1.10.1",
     "@data-fair/lib-processing-dev": "^0.2.0",
     "@data-fair/lib-types-builder": "^1.7.0",
-    "@types/find": "^0.2.4",
     "@types/fs-extra": "^11.0.4",
-    "@types/unzipper": "^0.10.11",
     "config": "^4.4.1",
     "debug": "^4.4.0",
     "eslint": "^9.26.0",
@@ -55,8 +53,7 @@
     "@data-fair/lib-processing-dev": "../../lib/packages/processing-dev"
   },
   "dependencies": {
-    "find": "^0.3.0",
-    "fs-extra": "^11.3.4",
-    "ogr2ogr": "^6.0.1"
+    "@data-fair/lib-utils": "^1.10.2",
+    "fs-extra": "^11.3.4"
   }
 }
