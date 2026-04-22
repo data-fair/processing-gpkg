@@ -2,9 +2,11 @@ import type { RunFunction, LogFunctions, DataFairWsClient } from '@data-fair/lib
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
 import type { AxiosInstance } from 'axios'
 
+import util from 'util'
 import { spawn } from 'child_process'
 import fs from 'fs-extra'
 import * as path from 'path'
+import FormData from 'form-data'
 
 import { fetchHTTP } from './fetch.ts'
 import { streamLayerToDataset } from './stream-layer.ts'
@@ -15,6 +17,7 @@ import { streamLayerToDataset } from './stream-layer.ts'
 let shouldBeStopped = false
 
 export const stop: () => Promise<void> = async () => { shouldBeStopped = true }
+
 /**
  * Input function, allows data processing to begin
  * @param context Context of the request
@@ -23,8 +26,8 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
 
   // Retrieving the contextual elements necessary for processing
-  const { processingConfig, processingId, secrets, tmpDir, axios, log, patchConfig, ws } = context
-  const tmpFile = await download(processingConfig, secrets, tmpDir, axios, log)
+  const { processingConfig, processingId, tmpDir, axios, log, patchConfig, ws } = context
+  const tmpFile = await download(processingConfig, tmpDir, axios, log)
 
   if (shouldBeStopped) return
   const layersFieldList = await extraction(tmpFile!, log)
@@ -32,8 +35,8 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   if (shouldBeStopped) return
 
   if (processingConfig.datasetMode === 'create') {
-    const updateConfig = await createDatasets(processingConfig, processingId, axios, layersFieldList, tmpFile, log)
-    if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig })
+    const updateConfig = await createDatasets(processingConfig, processingId, axios, tmpDir, layersFieldList!, tmpFile!, log)
+    if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.editableCreate })
   } else if (processingConfig.datasetMode === 'update') {
     await updateDatasets(processingConfig, axios, layersFieldList!, tmpFile!, log, ws)
   } else {
@@ -45,13 +48,12 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
  * Allows you to download the file and place it in a temporary folder for later processing.
  * We only process .zip and .gpkg formats; any other format will result in an error.
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
- * @param secrets           Sensitive information if necessary (such as a password, for example)
  * @param dir               Directory where to download the file
  * @param axios             Server for API requests
  * @param log               Log system that is displayed on the user interface
  * @returns Full path of the file to be processed
  */
-const download = async (processingConfig : ProcessingConfig, secrets, dir : string, axios : AxiosInstance, log : LogFunctions) => {
+const download = async (processingConfig : ProcessingConfig, dir : string, axios : AxiosInstance, log : LogFunctions) => {
   await fs.ensureDir(dir)
 
   await log.step('Téléchargement du fichier')
@@ -62,7 +64,7 @@ const download = async (processingConfig : ProcessingConfig, secrets, dir : stri
   let filename = decodeURIComponent(path.parse(processingConfig.url).base)
   if (shouldBeStopped) return
 
-  filename = await fetchHTTP(processingConfig, secrets, tmpFile, axios) || filename
+  filename = await fetchHTTP(processingConfig, tmpFile, axios) || filename
   if (shouldBeStopped) return
 
   // Try to prevent weird bug with NFS by forcing syncing file before reading it
@@ -79,14 +81,25 @@ const download = async (processingConfig : ProcessingConfig, secrets, dir : stri
     await log.info(`Dézippage du fichier ${filename}`)
 
     // Unzip
-    const proc = spawn('unzip', [tmpFile, '-d', `${tmpFile}-dezip`])
-    let result = ''
-    for await (const chunk of proc.stdout) {
-      result += chunk.toString()
-    }
+    const proc = spawn('unzip', ['-j', tmpFile, '-d', `${tmpFile}-dezip`])
 
-    if (result.length <= 0) {
-      throw new Error('Erreur au niveau du dézippage')
+    const stderrChunks: Buffer[] = []
+    proc.stderr.on('data', (d: Buffer) => {
+      stderrChunks.push(d)
+    })
+
+    const procClosed = new Promise<number>((resolve) => {
+      proc.on('close', (code) => {
+        resolve(code ?? 0)
+      })
+    })
+
+    proc.on('error', (err) => { throw err })
+
+    const exitCode = await procClosed
+    if (exitCode !== 0) {
+      const stderr = Buffer.concat(stderrChunks).toString()
+      throw new Error(`unzip en échec avec le code ${exitCode}: ${stderr}`)
     }
 
     // We are looking for the .gpkg files contained in the .zip file.
@@ -147,7 +160,7 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
   if (shouldBeStopped) return
 
   const layers = jsonStructure.layers
-  const layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } } = []
+  const layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } } = {}
 
   for (let i = 0; i < layers.length; i++) {
     for (let j = 0; j < layers[i].fields.length; j++) {
@@ -173,16 +186,31 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
       }
     }
 
-    // If there are no attributes (columns), it is considered unnecessary to retrieve the layer.
-    if (layers[i].fields.length <= 0) {
-      await log.warning(`Couche ${i + 1} - ${layers[i].name} - Pas d'attributs, INUTILISABLE`)
-    } else {
-      await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
-      layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount }
-    }
+    // Adding geometries
+    layers[i].fields.push({
+      title: 'geometry',
+      key: 'geometry',
+      type: 'string',
+      'x-refersTo': 'https://purl.org/geojson/vocab#geometry',
+      'x-capabilities': {
+        textAgg: false
+      }
+    })
+
+    await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
+    layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount }
   }
 
   return layersFieldList
+}
+
+function displayBytes (aSize) {
+  aSize = Math.abs(parseInt(aSize, 10))
+  if (aSize === 0) return '0 octets'
+  const def = [[1, 'octets'], [1000, 'ko'], [1000 * 1000, 'Mo'], [1000 * 1000 * 1000, 'Go'], [1000 * 1000 * 1000 * 1000, 'To'], [1000 * 1000 * 1000 * 1000 * 1000, 'Po']]
+  for (let i = 0; i < def.length; i++) {
+    if (aSize < def[i][0]) return (aSize / def[i - 1][0]).toLocaleString() + ' ' + def[i - 1][1]
+  }
 }
 
 /**
@@ -190,12 +218,13 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param processingId      Identifier of the processing currently in use
  * @param axios             Server for API requests
+ * @param dir               Directory where to download temporary files
  * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async (processingConfig : ProcessingConfig, processingId, axios : AxiosInstance, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
+const createDatasets = async (processingConfig : ProcessingConfig, processingId, axios : AxiosInstance, dir: string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions) => {
   await log.step('Construction des jeux de données')
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
@@ -215,32 +244,83 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId,
     } else {
       await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 
-      // Display names and types of the fields
-      for (const field of layersFieldList[idLayer].fields) {
+      const fields = layersFieldList[idLayer].fields
+      // Display names and types of the fields for debug
+      for (const field of fields) {
         await log.debug(`   Nom : ${field.key} - Type : ${field.type}`)
       }
 
-      // Create the dataset, empty
-      const fields = layersFieldList[idLayer].fields
-      const dataset = (await axios.post('api/v1/datasets', {
-        title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
-        description: '',
-        isRest: true,
-        schema: fields,
-        extras: { processingId }
-      })).data
-      await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+      if (processingConfig.dataset.editableCreate) {
+        // Create the dataset, empty
+        const dataset = (await axios.post('api/v1/datasets', {
+          title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
+          description: '',
+          isRest: true,
+          schema: fields,
+          extras: { processingId }
+        })).data
+        await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
 
-      const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-      const updateObject = { dataset: datasetObject, idLayer }
-      updateConfig.push(updateObject)
+        const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
+        const updateObject = { dataset: datasetObject, idLayer }
+        updateConfig.push(updateObject)
 
-      if (shouldBeStopped) return
-      // Dataset population
-      idStream += 1
-      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
+        if (shouldBeStopped) return
+        // Dataset population
+        idStream += 1
+        await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
 
-      await log.info('Jeu de données complet')
+        await log.info('Jeu de données complet')
+      } else {
+        const tmpFileGeoJSON = path.join(dir, `${layersFieldList[idLayer].name}.geojson`)
+
+        if (!(await fs.exists(tmpFileGeoJSON))) {
+          await log.info('Création du fichier temporaire')
+
+          const proc = spawn('ogr2ogr', ['-f', 'GeoJSON', tmpFileGeoJSON, tmpFile, layersFieldList[idLayer].name])
+
+          const stderrChunks: Buffer[] = []
+          proc.stderr.on('data', (d: Buffer) => {
+            stderrChunks.push(d)
+          })
+
+          const procClosed = new Promise<number>((resolve) => {
+            proc.on('close', (code) => {
+              resolve(code ?? 0)
+            })
+          })
+
+          proc.on('error', (err) => { throw err })
+
+          const exitCode = await procClosed
+          if (exitCode !== 0) {
+            const stderr = Buffer.concat(stderrChunks).toString()
+            throw new Error(`ogr2ogr en échec avec le code ${exitCode}: ${stderr}`)
+          }
+        }
+
+        const formData = new FormData()
+        formData.append('schema', JSON.stringify(fields))
+        formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
+        formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
+        formData.getLength = util.promisify(formData.getLength)
+        const contentLength = await formData.getLength()
+        await log.info(`Chargement de ${displayBytes(contentLength)}`)
+
+        const dataset = (await axios({
+          method: 'post',
+          url: 'api/v1/datasets',
+          data: formData,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          headers: { ...formData.getHeaders(), 'content-length': contentLength }
+        })).data
+        await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+
+        const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
+        const updateObject = { dataset: datasetObject, idLayer }
+        updateConfig.push(updateObject)
+      }
     }
     await log.info('')
   }

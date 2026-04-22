@@ -18,17 +18,12 @@ class FileNotFoundError extends Error {
 /**
  * Allows you to download a file using the HTML protocol
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
- * @param secrets           Sensitive information if necessary (such as a password, for example)
  * @param tmpFile           Name of the temporary file to transfer the downloaded file
  * @param axios             Server for API requests
  * @returns Name of extracted file
  */
-export const fetchHTTP = async (processingConfig: ProcessingConfig, secrets: ProcessingContext['secrets'], tmpFile: string, axios: ProcessingContext['axios']) => {
-  const password = secrets?.password ?? processingConfig.password
+export const fetchHTTP = async (processingConfig: ProcessingConfig, tmpFile: string, axios: ProcessingContext['axios']) => {
   const opts: any = { responseType: 'stream', maxRedirects: 4 }
-  if (processingConfig.username && password) {
-    opts.auth = { username: processingConfig.username, password }
-  }
 
   // File retrieval and download
   let res

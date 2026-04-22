@@ -62,7 +62,10 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
 
   // Analysis chunk by chunk; a chunk corresponds to a piece of data, not necessarily a complete line
   for await (const chunk of proc.stdout) {
-    if (isStopped()) return
+    if (isStopped()) {
+      proc.kill()
+      return
+    }
 
     // Text accumulation
     textBuffer += chunk.toString()
@@ -78,7 +81,12 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
 
         // We only keep the properties, the data recorded by column
         if (!feature.properties) continue
-        batch.push(feature.properties)
+        if (!feature.geometry) continue
+
+        batch.push({
+          ...feature.properties,
+          geometry: JSON.stringify(feature.geometry)
+        })
 
         // If the number of lines to be sent exceeds the limit, they are sent.
         if (batch.length >= BATCH_SIZE) {
@@ -110,6 +118,6 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   const exitCode = await procClosed
   if (exitCode !== 0) {
     const stderr = Buffer.concat(stderrChunks).toString()
-    throw new Error(`ogr2ogr exited with code ${exitCode}: ${stderr}`)
+    throw new Error(`ogr2ogr en échec avec le code ${exitCode}: ${stderr}`)
   }
 }

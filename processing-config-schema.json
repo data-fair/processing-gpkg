@@ -22,7 +22,7 @@
           }
         },
         {
-          "title": "Créer des jeux de données éditables",
+          "title": "Créer des jeux de données",
           "required": [
             "dataset"
           ],
@@ -38,6 +38,11 @@
                 "prefix"
               ],
               "properties": {
+                "editableCreate": {
+                  "type": "boolean",
+                  "title": "Jeu de données éditable",
+                  "description": "Par défaut, on crée un jeu de données fichier"
+                },
                 "prefix": {
                   "type": "string",
                   "title": "Préfixe des noms des jeux de données",
@@ -54,6 +59,11 @@
               "type": "string",
               "const": "update",
               "title": "Action"
+            },
+            "editableUpdate": {
+              "type": "boolean",
+              "title": "Jeu de données éditable",
+              "description": "Par défaut, on crée un jeu de données fichier"
             },
             "datasets": {
               "type": "array",
@@ -84,7 +94,7 @@
                     },
                     "layout": {
                       "getItems": {
-                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&${context.ownerFilter}",
+                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&${context.ownerFilter}&${parent.parent.parent.data.editableUpdate === true ? 'rest' : 'file'}=true",
                         "itemsResults": "data.results",
                         "itemTitle": "item.title",
                         "itemKey": "item.id"
