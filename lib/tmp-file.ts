@@ -1,9 +1,8 @@
-import type { LogFunctions } from '@data-fair/lib-common-types/processings.js'
-
 import fs from 'fs-extra'
-import * as path from 'path'
+import path from 'path'
 
 import { runCommand } from './spawn-process.ts'
+import type { GpkgProcessingContext } from './context.ts'
 
 /**
  * Allows you to create a temporary .geojson file from a layer in the data file, to be sent to create a file dataset.
@@ -14,9 +13,10 @@ import { runCommand } from './spawn-process.ts'
  * @param isStopped   Function allowing the program to stop if requested
  * @returns   Name of the temporary file created to send
  */
-export const createTmpFile = async (dir : string, tmpFile : string, layerName : string, log: LogFunctions, isStopped: () => boolean) => {
+export const createTmpFile = async (dir : string, tmpFile : string, layerName : string, log: GpkgProcessingContext['log'], isStopped: () => boolean) => {
   const tmpFileGeoJSON = path.join(dir, `${layerName}.geojson`)
 
+  // If there are two updates with the same layer, it is only downloaded once.
   if (!(await fs.pathExists(tmpFileGeoJSON))) {
     await log.info('Création du fichier temporaire')
     if (isStopped()) return

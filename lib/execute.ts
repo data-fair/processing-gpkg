@@ -4,7 +4,7 @@ import { formatBytes } from '@data-fair/lib-utils/format/bytes.js'
 
 import util from 'util'
 import fs from 'fs-extra'
-import * as path from 'path'
+import path from 'path'
 import FormData from 'form-data'
 
 import type { GpkgProcessingContext } from './context.ts'
@@ -19,6 +19,10 @@ import { runCommand } from './spawn-process.ts'
 let shouldBeStopped = false
 
 export const stop: () => Promise<void> = async () => { shouldBeStopped = true }
+
+type LayersFieldList = {
+  [idLayer: number]: { name: string, fields: any[], featureCount: number }
+}
 
 /**
  * Input function, allows data processing to begin
@@ -123,8 +127,8 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
 
 /**
  * Allows you to retrieve the layers of a file and organize their structure
- * @param tmpFile   Full path of the file to be processed
  * @param log       Log system that is displayed on the user interface
+ * @param tmpFile   Full path of the file to be processed
  * @returns Dictionary of available layer structures (id: {name, fields, featureCount})
  */
 const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
@@ -139,7 +143,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
   if (shouldBeStopped) return
 
   const layers = jsonStructure.layers
-  const layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } } = {}
+  const layersFieldList: LayersFieldList = {}
 
   for (let i = 0; i < layers.length; i++) {
     for (let j = 0; j < layers[i].fields.length; j++) {
@@ -192,13 +196,13 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
  * @param processingId      Identifier of the processing currently in use
  * @param axios             Server for API requests
  * @param tmpDir            Directory where to download temporary files
- * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
- * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  * @param ws                Data Fair's Websocket allows retrieving the dataset response.
+ * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
+ * @param tmpFile           Full path of the file to be processed
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string) => {
+const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
   await log.step('Construction des jeux de données')
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
@@ -221,7 +225,7 @@ const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, l
       const fields = layersFieldList[idLayer].fields
 
       // Display names and types of the fields for debug
-      await log.debug(`   Champs : ${fields.map(field => [field.key, field.type, ' - '])}`)
+      await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
 
       let dataset
 
@@ -286,28 +290,25 @@ const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, l
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param axios             Server for API requests
  * @param tmpDir            Directory where to download temporary files
- * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
- * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  * @param ws                Data Fair's Websocket allows retrieving the dataset response.
+ * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
+ * @param tmpFile           Full path of the file to be processed
  * @returns   Returns nothing, used to stop the program
  */
-const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string) => {
+const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
   await log.step('Mise à jour des jeux de données')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
   if (!processingConfig.datasets || processingConfig.datasets.length <= 0) {
-    await log.info('Pas de mise à jour renseignées')
+    await log.info('Pas de mises à jour renseignées')
     return
   }
 
   let idStream = 0
   // We add size=10000 to ensure that all datasets are retrieved (12 by default)
   const datasets = (await axios.get(`api/v1/datasets/?size=10000&${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
-  const datasetsId = []
-  for (const dataset of datasets) {
-    datasetsId.push(dataset.id)
-  }
+  const datasetsIds = new Set<string>(datasets.map(d => d.id))
 
   // We process each dataset to be updated
   for (const update of processingConfig.datasets) {
@@ -327,7 +328,7 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
     }
 
     // Check if the correct update operation can be performed, to avoid permission errors
-    if (!(datasetsId.includes(dataset.id))) {
+    if (!(datasetsIds.has(dataset.id))) {
       await log.warning(`Le jeu de données ${dataset.title} n'est pas de type ${processingConfig.editableUpdate ? 'éditable' : 'fichier'}`)
       await log.info('')
       continue
@@ -382,6 +383,9 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
         // Drop the old data
         if (shouldBeStopped) return
         if (processingConfig.editableUpdate) await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+
+        // We are waiting for the dataset to finish processing.
+        await ws.waitForJournal(dataset.id, 'finalize-end')
       } else {
         await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
         await log.info('')

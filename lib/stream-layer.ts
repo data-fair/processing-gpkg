@@ -65,6 +65,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   for await (const chunk of proc.stdout) {
     if (isStopped()) {
       proc.kill()
+      await procClosed
       return
     }
 

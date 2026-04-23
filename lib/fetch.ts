@@ -2,7 +2,7 @@ import { pipeline } from 'node:stream/promises'
 import type { AxiosRequestConfig } from 'axios'
 
 import fs from 'fs-extra'
-import * as path from 'path'
+import path from 'path'
 
 import type { GpkgProcessingContext } from './context.ts'
 
