@@ -1,36 +1,27 @@
-import type { ProcessingConfig } from '#types/processingConfig/index.ts'
-import type { ProcessingContext } from '@data-fair/lib-common-types/processings.js'
 import { pipeline } from 'node:stream/promises'
+import type { AxiosRequestConfig } from 'axios'
 
 import fs from 'fs-extra'
 import * as path from 'path'
 
-/**
- * Introduction of an error type in case of a file not found.
- */
-class FileNotFoundError extends Error {
-  constructor (message: string) {
-    super(message)
-    this.name = 'FileNotFoundError'
-  }
-}
+import type { GpkgProcessingContext } from './context.ts'
 
 /**
- * Allows you to download a file using the HTML protocol
+ * Allows you to download a file using the HTTP protocol
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param tmpFile           Name of the temporary file to transfer the downloaded file
  * @param axios             Server for API requests
  * @returns Name of extracted file
  */
-export const fetchHTTP = async (processingConfig: ProcessingConfig, tmpFile: string, axios: ProcessingContext['axios']) => {
-  const opts: any = { responseType: 'stream', maxRedirects: 4 }
+export const fetchHTTP = async (processingConfig: GpkgProcessingContext['processingConfig'], tmpFile: string, axios: GpkgProcessingContext['axios']) => {
+  const opts: AxiosRequestConfig = { responseType: 'stream', maxRedirects: 4 }
 
   // File retrieval and download
   let res
   try {
     res = await axios.get(processingConfig.url, opts)
   } catch (err: any) {
-    if (err.response?.status === 404) throw new FileNotFoundError(`File not found: ${processingConfig.url}`)
+    if (err.response?.status === 404) throw new Error(`File not found: ${processingConfig.url}`)
     throw err
   }
   await pipeline(res.data, fs.createWriteStream(tmpFile))

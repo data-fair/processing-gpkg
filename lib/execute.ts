@@ -1,17 +1,17 @@
-import type { RunFunction, DataFairWsClient, LogFunctions } from '@data-fair/lib-common-types/processings.js'
+import type { RunFunction } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from '#types/processingConfig/index.ts'
-import type { AxiosInstance } from 'axios'
 import { formatBytes } from '@data-fair/lib-utils/format/bytes.js'
 
 import util from 'util'
-import { spawn } from 'child_process'
 import fs from 'fs-extra'
 import * as path from 'path'
 import FormData from 'form-data'
 
+import type { GpkgProcessingContext } from './context.ts'
 import { fetchHTTP } from './fetch.ts'
 import { streamLayerToDataset } from './stream-layer.ts'
 import { createTmpFile } from './tmp-file.ts'
+import { runCommand } from './spawn-process.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -28,19 +28,22 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
 
   // Retrieving the contextual elements necessary for processing
-  const { processingConfig, processingId, tmpDir, axios, log, patchConfig, ws } = context
-  const tmpFile = await download(processingConfig, tmpDir, axios, log)
+  const { processingConfig, patchConfig } = context
+  const tmpFile = await download(context)
 
   if (shouldBeStopped) return
-  const layersFieldList = await extraction(tmpFile!, log)
+  if (!tmpFile) return
+  const layersFieldList = await extraction(context, tmpFile)
 
   if (shouldBeStopped) return
+  if (!layersFieldList) return
 
   if (processingConfig.datasetMode === 'create') {
-    const updateConfig = await createDatasets(processingConfig, processingId, axios, tmpDir, layersFieldList!, tmpFile!, log, ws)
-    if (updateConfig && updateConfig.length > 0) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate })
+    const updateConfig = await createDatasets(context, layersFieldList, tmpFile)
+
+    if (updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate })
   } else if (processingConfig.datasetMode === 'update') {
-    await updateDatasets(processingConfig, axios, tmpDir, layersFieldList!, tmpFile!, log, ws)
+    await updateDatasets(context, layersFieldList, tmpFile)
   } else {
     await patchConfig({ datasetMode: 'create', dataset: { prefix: '' } })
   }
@@ -50,20 +53,21 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
  * Allows you to download the file and place it in a temporary folder for later processing.
  * We only process .zip and .gpkg formats; any other format will result in an error.
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
- * @param dir               Directory where to download the file
+ * @param tmpDir            Directory where to download the file
  * @param axios             Server for API requests
  * @param log               Log system that is displayed on the user interface
  * @returns Full path of the file to be processed
  */
-const download = async (processingConfig : ProcessingConfig, dir : string, axios : AxiosInstance, log : LogFunctions) => {
-  await fs.ensureDir(dir)
+const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessingContext) => {
+  await fs.ensureDir(tmpDir)
 
   await log.step('Téléchargement du fichier')
-  let tmpFile = path.join(dir, 'file')
+  let tmpFile = path.join(tmpDir, 'file')
   await fs.ensureFile(tmpFile)
   if (shouldBeStopped) return
 
-  let filename = decodeURIComponent(path.parse(processingConfig.url).base)
+  const url = new URL(processingConfig.url)
+  let filename = decodeURIComponent(path.basename(url.pathname))
   if (shouldBeStopped) return
 
   filename = await fetchHTTP(processingConfig, tmpFile, axios) || filename
@@ -79,41 +83,20 @@ const download = async (processingConfig : ProcessingConfig, dir : string, axios
   let gpkgFilename
 
   // Check the file format
-  if (filename.endsWith('.zip')) {
+  if (filename.toLowerCase().endsWith('.zip')) {
     await log.info(`Dézippage du fichier ${filename}`)
 
     // Unzip
-    const proc = spawn('unzip', ['-j', tmpFile, '-d', `${tmpFile}-dezip`])
-
-    const stderrChunks: Buffer[] = []
-    proc.stderr.on('data', (d: Buffer) => {
-      stderrChunks.push(d)
-    })
-
-    const procClosed = new Promise<number>((resolve) => {
-      proc.on('close', (code) => {
-        resolve(code ?? 0)
-      })
-    })
-
-    proc.on('error', (err) => { throw err })
-
-    const exitCode = await procClosed
-    if (exitCode !== 0) {
-      const stderr = Buffer.concat(stderrChunks).toString()
-      throw new Error(`unzip en échec avec le code ${exitCode}: ${stderr}`)
-    }
+    await runCommand('unzip', ['-j', tmpFile, '-d', `${tmpFile}-dezip`])
 
     // We are looking for the .gpkg files contained in the .zip file.
     const filesGpkg: string[] = []
-    await fs.readdir(`${tmpFile}-dezip`)
-      .then((files) => {
-        for (const file of files) {
-          if (file.endsWith('.gpkg')) {
-            filesGpkg.push(`${tmpFile}-dezip/${file}`)
-          }
-        }
-      })
+    const files = await fs.readdir(`${tmpFile}-dezip`)
+    for (const file of files) {
+      if (file.toLowerCase().endsWith('.gpkg')) {
+        filesGpkg.push(`${tmpFile}-dezip/${file}`)
+      }
+    }
 
     const nbFichiers = filesGpkg.length
     if (shouldBeStopped) return
@@ -122,11 +105,10 @@ const download = async (processingConfig : ProcessingConfig, dir : string, axios
       throw new Error('Il n\'y a pas de fichiers .gpkg à traiter dans ce zip.')
     } else {
       // We keep the first .gpkg file we find, we ignore the others
-      const tabSplit = filesGpkg[0].split('/')
-      gpkgFilename = tabSplit[tabSplit.length - 1]
+      gpkgFilename = path.basename(filesGpkg[0])
       tmpFile = filesGpkg[0]
     }
-  } else if (filename.endsWith('.gpkg')) {
+  } else if (filename.toLowerCase().endsWith('.gpkg')) {
     await log.info('Récupération du fichier gpkg')
     gpkgFilename = filename
   } else {
@@ -145,11 +127,11 @@ const download = async (processingConfig : ProcessingConfig, dir : string, axios
  * @param log       Log system that is displayed on the user interface
  * @returns Dictionary of available layer structures (id: {name, fields, featureCount})
  */
-const extraction = async (tmpFile : string, log : LogFunctions) => {
+const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
   await log.step('Récupération de la structure des données')
 
   // Display layers
-  const proc = spawn('ogrinfo', ['-json', tmpFile])
+  const proc = await runCommand('ogrinfo', ['-json', tmpFile])
   let result = ''
   if (shouldBeStopped) return
 
@@ -158,7 +140,7 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
     result += chunk.toString()
   }
 
-  const jsonStructure = await JSON.parse(result)
+  const jsonStructure = JSON.parse(result)
   if (shouldBeStopped) return
 
   const layers = jsonStructure.layers
@@ -167,6 +149,11 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
   for (let i = 0; i < layers.length; i++) {
     for (let j = 0; j < layers[i].fields.length; j++) {
       if (shouldBeStopped) return
+
+      if (!layers[i].fields[j].type) {
+        throw new Error(`Pas de type pour ${layers[i].fields[j].name}`)
+      }
+
       let typeCorrect = layers[i].fields[j].type.toLowerCase()
 
       // Check the types
@@ -182,9 +169,6 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
         ...layers[i].fields[j],
         key: layers[i].fields[j].name,
         type: typeCorrect,
-      }
-      if (!layers[i].fields[j].type) {
-        throw new Error(`Pas de type pour ${layers[i].fields[j].name}`)
       }
     }
 
@@ -212,14 +196,14 @@ const extraction = async (tmpFile : string, log : LogFunctions) => {
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param processingId      Identifier of the processing currently in use
  * @param axios             Server for API requests
- * @param dir               Directory where to download temporary files
+ * @param tmpDir            Directory where to download temporary files
  * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  * @param ws                Data Fair's Websocket allows retrieving the dataset response.
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async (processingConfig : ProcessingConfig, processingId : string, axios : AxiosInstance, dir: string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log: LogFunctions, ws : DataFairWsClient) => {
+const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string) => {
   await log.step('Construction des jeux de données')
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
@@ -240,10 +224,9 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId 
       await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 
       const fields = layersFieldList[idLayer].fields
+
       // Display names and types of the fields for debug
-      for (const field of fields) {
-        await log.debug(`   Nom : ${field.key} - Type : ${field.type}`)
-      }
+      await log.debug(`   Champs : ${fields.map(field => [field.key, field.type, ' - '])}`)
 
       let dataset
 
@@ -264,12 +247,13 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId 
         idStream += 1
         await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
       } else {
-        const tmpFileGeoJSON = await createTmpFile(dir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+        const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+        if (!tmpFileGeoJSON) return
 
         const formData = new FormData()
         formData.append('schema', JSON.stringify(fields))
         formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
-        formData.append('file', await fs.createReadStream(tmpFileGeoJSON!), { filename: path.parse(tmpFileGeoJSON!).base })
+        formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
         formData.getLength = util.promisify(formData.getLength)
         const contentLength = await formData.getLength()
         await log.info(`Chargement de ${formatBytes(contentLength!)}`)
@@ -306,14 +290,14 @@ const createDatasets = async (processingConfig : ProcessingConfig, processingId 
  * Allows updating a dataset, either by force (schema reset) or by non-force (data replacement).
  * @param processingConfig  Processing configuration, obtained from the form data (processing-config-schema.json)
  * @param axios             Server for API requests
- * @param dir               Directory where to download temporary files
+ * @param tmpDir            Directory where to download temporary files
  * @param layersFieldList   Dictionary containing the structure of the file's layers (id: {name, fields, featureCount})
  * @param tmpFile           Full path of the file to be processed
  * @param log               Log system that is displayed on the user interface
  * @param ws                Data Fair's Websocket allows retrieving the dataset response.
  * @returns   Returns nothing, used to stop the program
  */
-const updateDatasets = async (processingConfig : ProcessingConfig, axios : AxiosInstance, dir : string, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string, log : LogFunctions, ws : DataFairWsClient) => {
+const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: { [idLayer: number]: { name: string, fields: any[], featureCount: number } }, tmpFile: string) => {
   await log.step('Mise à jour des jeux de données')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
@@ -323,12 +307,12 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
   }
 
   let idStream = 0
-  const datasets = (await axios.get(`api/v1/datasets/?${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
+  // We add size=10000 to ensure that all datasets are retrieved (12 by default)
+  const datasets = (await axios.get(`api/v1/datasets/?size=10000&${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
   const datasetsId = []
   for (const dataset of datasets) {
     datasetsId.push(dataset.id)
   }
-  console.log('Datasets : ', datasetsId)
 
   // We process each dataset to be updated
   for (const update of processingConfig.datasets) {
@@ -347,14 +331,15 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
       continue
     }
 
-    if (!(dataset.id in datasetsId)) {
+    // Check if the correct update operation can be performed, to avoid permission errors
+    if (!(datasetsId.includes(dataset.id))) {
       await log.warning(`Le jeu de données ${dataset.title} n'est pas de type ${processingConfig.editableUpdate ? 'éditable' : 'fichier'}`)
       await log.info('')
       continue
     }
 
     // Retrieving the dataset schema
-    const datasetSchema = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
+    const datasetSchema : { key: string, type: string }[] = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
     if (shouldBeStopped) return
 
     if (update.forceUpdate) {
@@ -377,31 +362,29 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
         formData.append('schema', JSON.stringify(layersFieldList[idLayer].fields))
       }
     } else {
-      try {
-        // Check if the schemas match.
-        await log.info('Vérification de la compatibilité des schémas')
+      // Check if the schemas match.
+      await log.info('Vérification de la compatibilité des schémas')
 
-        // We don't establish equality in both directions because of the attributes added during the processing of the dataset, such as the update date, for example.
-        for await (const field of layersFieldList[idLayer].fields) {
-          if (shouldBeStopped) return
-          let find = false
-          for await (const datasetField of datasetSchema) {
-            if (shouldBeStopped) return
-            if (datasetField.key === field.key && datasetField.type === field.type) {
-              find = true
-              break
-            }
-          }
-          if (!find) {
-            throw new Error('Non compatibilité des schémas')
-          }
+      let compatible = true
+      const datasetSchemaMap = new Map(datasetSchema.map(datasetField => [datasetField.key, datasetField.type]))
+
+      // We don't establish equality in both directions because of the attributes added during the processing of the dataset, such as the update date, for example.
+      for (const field of layersFieldList[idLayer].fields) {
+        if (shouldBeStopped) return
+
+        const typeFieldDataset = datasetSchemaMap.get(field.name)
+
+        if (typeFieldDataset !== field.type || typeFieldDataset === undefined) {
+          compatible = false
+          break
         }
+      }
 
+      if (compatible) {
         // Drop the old data
         if (shouldBeStopped) return
         if (processingConfig.editableUpdate) await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
-      } catch (err) {
-        // Instead of triggering an error, we issue a warning to allow subsequent updates to proceed.
+      } else {
         await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
         await log.info('')
         continue
@@ -413,8 +396,10 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
       idStream += 1
       await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped, dataset.title)
     } else {
-      const tmpFileGeoJSON = await createTmpFile(dir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
-      formData.append('file', await fs.createReadStream(tmpFileGeoJSON!), { filename: path.parse(tmpFileGeoJSON!).base })
+      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+      if (!tmpFileGeoJSON) return
+
+      formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
       formData.getLength = util.promisify(formData.getLength)
       const contentLength = await formData.getLength()
       await log.info(`Chargement de ${formatBytes(contentLength!)}`)
@@ -431,6 +416,7 @@ const updateDatasets = async (processingConfig : ProcessingConfig, axios : Axios
       })
     }
 
+    if (shouldBeStopped) return
     // We are waiting for the dataset to finish processing.
     await ws.waitForJournal(dataset.id, 'finalize-end')
 
