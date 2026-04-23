@@ -98,10 +98,10 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
       }
     }
 
-    const nbFichiers = filesGpkg.length
+    const nbFiles = filesGpkg.length
     if (shouldBeStopped) return
 
-    if (nbFichiers <= 0) {
+    if (nbFiles <= 0) {
       throw new Error('Il n\'y a pas de fichiers .gpkg à traiter dans ce zip.')
     } else {
       // We keep the first .gpkg file we find, we ignore the others
@@ -132,14 +132,9 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
 
   // Display layers
   const proc = await runCommand('ogrinfo', ['-json', tmpFile])
-  let result = ''
   if (shouldBeStopped) return
 
-  for await (const chunk of proc.stdout) {
-    if (shouldBeStopped) return
-    result += chunk.toString()
-  }
-
+  const result = proc.stdout
   const jsonStructure = JSON.parse(result)
   if (shouldBeStopped) return
 
@@ -358,6 +353,9 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
           schema: layersFieldList[idLayer].fields
         })
         if (shouldBeStopped) return
+
+        // We are waiting for the dataset to finish processing.
+        await ws.waitForJournal(dataset.id, 'finalize-end')
       } else {
         formData.append('schema', JSON.stringify(layersFieldList[idLayer].fields))
       }
@@ -374,7 +372,7 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
 
         const typeFieldDataset = datasetSchemaMap.get(field.name)
 
-        if (typeFieldDataset !== field.type || typeFieldDataset === undefined) {
+        if (typeFieldDataset !== field.type) {
           compatible = false
           break
         }

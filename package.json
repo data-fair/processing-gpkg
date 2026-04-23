@@ -1,7 +1,7 @@
 {
   "name": "@data-fair/processing-gpkg",
   "version": "0.0.0",
-  "description": "Minimal plugin for data-fair-processings. Create one-line datasets on demand.",
+  "description": "Create datasets from a geopackage (gpkg) file ",
   "main": "index.ts",
   "type": "module",
   "scripts": {
