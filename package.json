@@ -1,6 +1,6 @@
 {
   "name": "@data-fair/processing-gpkg",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Create datasets from a geopackage (gpkg) file ",
   "main": "index.ts",
   "type": "module",
