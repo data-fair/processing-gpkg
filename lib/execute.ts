@@ -1,5 +1,5 @@
 import type { RunFunction } from '@data-fair/lib-common-types/processings.js'
-import type { ProcessingConfig } from '#types/processingConfig/index.ts'
+import type { CreateDatasets, ProcessingConfig, Parameters, UpdateDatasets } from '#types/processingConfig/index.ts'
 import { formatBytes } from '@data-fair/lib-utils/format/bytes.js'
 
 import util from 'util'
@@ -15,14 +15,21 @@ import { runCommand } from './spawn-process.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
+ *
+ * `stopSignal` is a promise that resolves the moment `stop()` is called. Long-running
+ * waiters (typically `ws.waitForJournal` in phase 2) race against it so they can bail
+ * out immediately instead of timing out after several minutes.
  */
 let shouldBeStopped = false
+let stopSignal: Promise<void> = new Promise(() => {})
+let resolveStop: () => void = () => {}
 
-export const stop: () => Promise<void> = async () => { shouldBeStopped = true }
-
-type LayersFieldList = {
-  [idLayer: number]: { name: string, fields: any[], featureCount: number }
+export const stop: () => Promise<void> = async () => {
+  shouldBeStopped = true
+  resolveStop()
 }
+
+type LayersFieldList = Record<number, { name: string, fields: any[], featureCount: number }>
 
 /**
  * Input function, allows data processing to begin
@@ -30,26 +37,36 @@ type LayersFieldList = {
  */
 export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
+  stopSignal = new Promise<void>(resolve => { resolveStop = resolve })
+  console.log(stopSignal)
 
-  // Retrieving the contextual elements necessary for processing
-  const { processingConfig, patchConfig } = context
-  const tmpFile = await download(context)
+  try {
+    // Retrieving the contextual elements necessary for processing
+    const { processingConfig, patchConfig } = context
+    const tmpFile = await download(context)
 
-  if (shouldBeStopped) return
-  if (!tmpFile) return
-  const layersFieldList = await extraction(context, tmpFile)
+    if (shouldBeStopped) return
+    if (!tmpFile) return
+    const layersFieldList = await extraction(context, tmpFile)
 
-  if (shouldBeStopped) return
-  if (!layersFieldList) return
+    if (shouldBeStopped) return
+    if (!layersFieldList) return
 
-  if (processingConfig.datasetMode === 'create') {
-    const updateConfig = await createDatasets(context, layersFieldList, tmpFile)
+    if (processingConfig.datasetMode === 'create') {
+      const updateConfig = await createDatasets(context, layersFieldList, tmpFile)
 
-    if (updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate })
-  } else if (processingConfig.datasetMode === 'update') {
-    await updateDatasets(context, layersFieldList, tmpFile)
-  } else {
-    await patchConfig({ datasetMode: 'create', dataset: { prefix: '' } })
+      if (updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate } as any)
+    } else if (processingConfig.datasetMode === 'update') {
+      await updateDatasets(context, layersFieldList, tmpFile)
+    } else {
+      await patchConfig({ datasetMode: 'create', dataset: { prefix: '' } })
+    }
+  } finally {
+    // Settle the stop signal so any continuation chained on it (the `stopSignal.then(...)`
+    // branches inside `trackFinalization`) is released. At this point all the relevant
+    // `Promise.race` calls have already resolved via the journal branch, so this late
+    // resolution is a no-op behaviour-wise — it only frees handlers.
+    resolveStop()
   }
 }
 
@@ -202,84 +219,126 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
  * @param tmpFile           Full path of the file to be processed
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
+const createDatasets = async ({ processingConfig: rawConfig, processingId, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
+  const processingConfig = rawConfig as CreateDatasets & Parameters
   await log.step('Construction des jeux de données')
 
+  let idsLayers: number[] = []
+
+  // If we want to add all the layers, we add all the identifiers to the list.
+  if (processingConfig.addAllLayers) {
+    idsLayers = Object.keys(layersFieldList).map(layer => Number(layer))
+  } else {
+    processingConfig.listIdsLayers = processingConfig.listIdsLayers ? processingConfig.listIdsLayers.replaceAll(' ', '') : ''
+
+    const listParts = processingConfig.listIdsLayers.split(',')
+
+    for (const part of listParts) {
+      const idLayer = Number(part)
+
+      if (idLayer && idLayer > 0) {
+        idsLayers.push(idLayer)
+      } else {
+        const interval = part.split('-')
+
+        if (interval.length === 2) {
+          const start = Number(interval[0])
+          const end = Number(interval[1])
+
+          if (start && start > 0 && end && end >= start) {
+            for (let id = start; id <= end; id++) {
+              idsLayers.push(id)
+            }
+          }
+        }
+      }
+    }
+  }
+
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
-  if (!processingConfig.idsLayers || processingConfig.idsLayers.length <= 0) {
-    await log.info('Pas de couches renseignées')
+  if (idsLayers.length <= 0) {
+    await log.warning('Pas de couches renseignées')
     return
   }
 
+  await log.info(`Extraction des couches ${idsLayers}`)
+
+  const idsLayersCreate = []
   const updateConfig = []
   let idStream = 0
 
-  for (const idLayer of processingConfig.idsLayers) {
-    if (shouldBeStopped) return
-
+  // Checking the availability of the sheets
+  for (const idLayer of idsLayers) {
     if (!(idLayer in layersFieldList)) {
       await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
     } else {
-      await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
+      idsLayersCreate.push(idLayer)
+    }
+  }
+  await log.info('')
 
-      const fields = layersFieldList[idLayer].fields
+  for (const idLayer of idsLayersCreate) {
+    if (shouldBeStopped) return
 
-      // Display names and types of the fields for debug
-      await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
+    await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 
-      let dataset
+    const fields = layersFieldList[idLayer].fields
 
-      if (processingConfig.dataset.editableCreate) {
-        // Create the dataset, empty
-        dataset = (await axios.post('api/v1/datasets', {
-          title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
-          description: '',
-          isRest: true,
-          schema: fields,
-          extras: { processingId }
-        })).data
-        await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+    // Display names and types of the fields for debug
+    await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
 
-        if (shouldBeStopped) return
+    let dataset
 
-        // Dataset population
-        idStream += 1
-        await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
-      } else {
-        const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
-        if (!tmpFileGeoJSON) return
-
-        const formData = new FormData()
-        formData.append('schema', JSON.stringify(fields))
-        formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
-        formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
-        formData.getLength = util.promisify(formData.getLength)
-        const contentLength = await formData.getLength()
-        await log.info(`Chargement de ${formatBytes(contentLength!)}`)
-
-        if (shouldBeStopped) return
-
-        dataset = (await axios({
-          method: 'post',
-          url: 'api/v1/datasets',
-          data: formData,
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-          headers: { ...formData.getHeaders(), 'content-length': contentLength }
-        })).data
-        await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
-      }
+    if (processingConfig.dataset.editableCreate) {
+      // Create the dataset, empty
+      dataset = (await axios.post('api/v1/datasets', {
+        title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
+        description: '',
+        isRest: true,
+        schema: fields,
+        extras: { processingId }
+      })).data
+      await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
 
       if (shouldBeStopped) return
 
-      // We are waiting for the dataset to finish processing.
-      await ws.waitForJournal(dataset.id, 'finalize-end')
-      await log.info('Jeu de données complet')
+      // Dataset population
+      idStream += 1
+      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
+    } else {
+      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+      if (!tmpFileGeoJSON) return
 
-      const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-      const updateObject = { dataset: datasetObject, idLayer }
-      updateConfig.push(updateObject)
+      const formData = new FormData()
+      formData.append('schema', JSON.stringify(fields))
+      formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
+      formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
+      const getLength = util.promisify(formData.getLength.bind(formData))
+      const contentLength = await getLength()
+      await log.info(`Chargement de ${formatBytes(contentLength!)}`)
+
+      if (shouldBeStopped) return
+
+      dataset = (await axios({
+        method: 'post',
+        url: 'api/v1/datasets',
+        data: formData,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        headers: { ...formData.getHeaders(), 'content-length': contentLength }
+      })).data
+      await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
     }
+
+    if (shouldBeStopped) return
+
+    // We are waiting for the dataset to finish processing.
+    await ws.waitForJournal(dataset.id, 'finalize-end')
+    await log.info('Jeu de données complet')
+
+    const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
+    const updateObject = { dataset: datasetObject, idLayer }
+    updateConfig.push(updateObject)
     await log.info('')
   }
   return updateConfig
@@ -296,7 +355,8 @@ const createDatasets = async ({ processingConfig, processingId, axios, tmpDir, l
  * @param tmpFile           Full path of the file to be processed
  * @returns   Returns nothing, used to stop the program
  */
-const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
+const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
+  const processingConfig = rawConfig as UpdateDatasets
   await log.step('Mise à jour des jeux de données')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
@@ -307,8 +367,33 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
 
   let idStream = 0
   // We add size=10000 to ensure that all datasets are retrieved (12 by default)
-  const datasets = (await axios.get(`api/v1/datasets/?size=10000&${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
+  const datasets : { id: string }[] = (await axios.get(`api/v1/datasets/?size=10000&${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
   const datasetsIds = new Set<string>(datasets.map(d => d.id))
+
+  const datasetsUpdate = []
+  // Checking the availability of the layers and the datasets
+  for (const update of processingConfig.datasets) {
+    if (!update.dataset.id || !update.dataset.title) {
+      await log.warning('Le jeu de données est incomplet (id ou titre manquant)')
+      await log.info('')
+      continue
+    }
+
+    // Check if the sheet is available
+    if (!(update.idLayer in layersFieldList)) {
+      await log.warning(`La couche ${update.idLayer} n'est pas présente dans les feuilles disponibles`)
+      await log.info('')
+      continue
+    }
+
+    // Check if the correct update operation can be performed, to avoid permission errors
+    if (!(datasetsIds.has(update.dataset.id))) {
+      await log.warning(`Le jeu de données ${update.dataset.title} n'est pas de type fichier`)
+      await log.info('')
+      continue
+    }
+    datasetsUpdate.push(update)
+  }
 
   // We process each dataset to be updated
   for (const update of processingConfig.datasets) {
@@ -319,20 +404,6 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
     const formData = new FormData()
 
     await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer}`)
-
-    // Check if the layer is available
-    if (!(idLayer in layersFieldList)) {
-      await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
-      await log.info('')
-      continue
-    }
-
-    // Check if the correct update operation can be performed, to avoid permission errors
-    if (!(datasetsIds.has(dataset.id))) {
-      await log.warning(`Le jeu de données ${dataset.title} n'est pas de type ${processingConfig.editableUpdate ? 'éditable' : 'fichier'}`)
-      await log.info('')
-      continue
-    }
 
     // Retrieving the dataset schema
     const datasetSchema : { key: string, type: string }[] = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
@@ -347,7 +418,8 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
         if (shouldBeStopped) return
 
         // We are waiting for the dataset to finish processing.
-        await ws.waitForJournal(dataset.id, 'finalize-end')
+        // We are certain of the ID and title definitions with the previous check.
+        await ws.waitForJournal(dataset.id!, 'finalize-end')
 
         // Update the schema
         await axios.post(`api/v1/datasets/${dataset.id}`, {
@@ -356,7 +428,8 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
         if (shouldBeStopped) return
 
         // We are waiting for the dataset to finish processing.
-        await ws.waitForJournal(dataset.id, 'finalize-end')
+        // We are certain of the ID and title definitions with the previous check.
+        await ws.waitForJournal(dataset.id!, 'finalize-end')
       } else {
         formData.append('schema', JSON.stringify(layersFieldList[idLayer].fields))
       }
@@ -385,7 +458,8 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
         if (processingConfig.editableUpdate) await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
 
         // We are waiting for the dataset to finish processing.
-        await ws.waitForJournal(dataset.id, 'finalize-end')
+        // We are certain of the ID and title definitions with the previous check.
+        await ws.waitForJournal(dataset.id!, 'finalize-end')
       } else {
         await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
         await log.info('')
@@ -396,14 +470,15 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
     // Data update
     if (processingConfig.editableUpdate) {
       idStream += 1
-      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped, dataset.title)
+      // We are certain of the ID and title definitions with the previous check.
+      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id!, axios, log, () => shouldBeStopped, dataset.title)
     } else {
       const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return
 
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
-      formData.getLength = util.promisify(formData.getLength)
-      const contentLength = await formData.getLength()
+      const getLength = util.promisify(formData.getLength.bind(formData))
+      const contentLength = await getLength()
       await log.info(`Chargement de ${formatBytes(contentLength!)}`)
 
       if (shouldBeStopped) return
@@ -420,7 +495,8 @@ const updateDatasets = async ({ processingConfig, axios, tmpDir, log, ws } : Gpk
 
     if (shouldBeStopped) return
     // We are waiting for the dataset to finish processing.
-    await ws.waitForJournal(dataset.id, 'finalize-end')
+    // We are certain of the ID and title definitions with the previous check.
+    await ws.waitForJournal(dataset.id!, 'finalize-end')
 
     await log.info('Mise à jour complète')
     await log.info('')

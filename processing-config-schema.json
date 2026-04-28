@@ -6,13 +6,15 @@
   ],
   "allOf": [
     {
-      "title": "Liste de jeux de données",
+      "title": "Dataset mode",
+      "x-i18n-title": { "fr": "Liste de jeux de données", "en": "Datasets" },
       "default": {
         "datasetMode": "list"
       },
       "oneOf": [
         {
-          "title" : "Lister les différentes couches",
+          "title": "List layers",
+          "x-i18n-title": { "fr": "Lister les différentes couches", "en": "List the available layers" },
           "properties": {
             "datasetMode": {
               "type": "string",
@@ -22,7 +24,8 @@
           }
         },
         {
-          "title": "Créer des jeux de données",
+          "title": "Create datasets",
+          "x-i18n-title": { "fr": "Créer des jeux de données", "en": "Create datasets" },
           "required": [
             "dataset"
           ],
@@ -40,20 +43,25 @@
               "properties": {
                 "editableCreate": {
                   "type": "boolean",
-                  "title": "Jeux de données éditables",
-                  "description": "Par défaut, on crée des jeux de données fichier, moins coûteux en mémoire, mais difficilement actualisables"
+                  "title": "Editable datasets",
+                  "x-i18n-title": { "fr": "Jeux de données éditables", "en": "Editable datasets" },
+                  "description": "By default, file datasets are created, which are less memory-intensive but difficult to update.",
+                  "x-i18n-description": { "fr": "Par défaut, on crée des jeux de données fichier, moins coûteux en mémoire, mais difficilement actualisables.", "en": "By default, file datasets are created, which are less memory-intensive but difficult to update." }
                 },
                 "prefix": {
                   "type": "string",
-                  "title": "Préfixe des noms des jeux de données",
-                  "description": "Les titres des jeux de données sont construits avec ce préfixe et le nom de la couche correspondante."
+                  "title": "Datasets prefix",
+                  "x-i18n-title": { "fr": "Préfixe des noms des jeux de données", "en": "Datasets name prefix" },
+                  "description": "Dataset titles are built from this prefix and the matching layer name.",
+                  "x-i18n-description": { "fr": "Les titres des jeux de données sont construits avec ce préfixe et le nom de la couche correspondante.", "en": "Dataset titles are built from this prefix and the matching layer name." }
                 }
               }
             }
           }
         },
         {
-          "title": "Mettre à jour des jeux de données",
+          "title": "Update datasets",
+          "x-i18n-title": { "fr": "Mettre à jour des jeux de données", "en": "Update datasets" },
           "properties": {
             "datasetMode": {
               "type": "string",
@@ -62,12 +70,15 @@
             },
             "editableUpdate": {
               "type": "boolean",
-              "title": "Jeux de données éditables",
-              "description": "Par défaut, on met à jour des jeux de données fichier"
+              "title": "Editable datasets",
+              "x-i18n-title": { "fr": "Jeux de données éditables", "en": "Editable datasets" },
+              "description": "By default, file datasets are updated",
+              "x-i18n-description": { "fr": "Par défaut, on met à jour des jeux de données fichier.", "en": "By default, file datasets are updated" }
             },
             "datasets": {
               "type": "array",
-              "title": "Jeux à mettre à jour",
+              "title": "Datasets to update",
+              "x-i18n-title": { "fr": "Jeux à mettre à jour", "en": "Datasets to update" },
               "layout": {
                 "listEditMode": "inline"
               },
@@ -100,11 +111,13 @@
                 "properties": {
                   "dataset": {
                     "type": "object",
-                    "title": "Jeu de données existant",
+                    "title": "Existing dataset",
+                    "x-i18n-title": { "fr": "Jeu de données existant", "en": "Existing dataset" },
                     "properties": {
                       "id": {
                         "type": "string",
-                        "title": "Identifiant"
+                        "title": "Identifier",
+                        "x-i18n-title": { "fr": "Identifiant", "en": "Identifier" }
                       },
                       "href": {
                         "type": "string",
@@ -112,7 +125,8 @@
                       },
                       "title": {
                         "type": "string",
-                        "title": "Titre"
+                        "title": "Title",
+                        "x-i18n-title": { "fr": "Titre", "en": "Title" }
                       }
                     },
                     "layout": {
@@ -126,12 +140,14 @@
                   },
                   "idLayer": {
                     "type": "integer",
-                    "title": "Numéro de la couche",
+                    "title": "Layer number",
+                    "x-i18n-title": { "fr": "Numéro de la couche", "en": "Layer number" },
                     "minimum": 1
                   },
                   "forceUpdate": {
                     "type" : "boolean",
-                    "title" : "Forcer la mise à jour du schéma"
+                    "title": "Force schema update",
+                    "x-i18n-title": { "fr": "Forcer la mise à jour du schéma", "en": "Force schema update" }
                   }
                 }
               }
@@ -141,26 +157,35 @@
       ]
     },
     {
-      "title": "Paramètres",
+      "title": "Parameters",
+      "x-i18n-title": { "fr": "Paramètres", "en": "Parameters" },
       "required": [
         "url"
       ],
       "properties": {
         "url": {
-          "title": "URL source",
+          "title": "Source URL",
+          "x-i18n-title": { "fr": "URL source", "en": "Source URL" },
           "type": "string",
-          "description": "Les protocoles supportés sont HTTP et HTTPS, les formats supportés sont .zip et .gpkg."
+          "description": "Supported protocols are HTTP and HTTPS; supported formats are .zip and .gpkg.",
+          "x-i18n-description": { "fr": "Les protocoles supportés sont HTTP et HTTPS, les formats supportés sont .zip et .gpkg.", "en": "Supported protocols are HTTP and HTTPS; supported formats are .zip and .gpkg." }
         },
-        "idsLayers": {
-          "type": "array",
-          "title": "Couches à extraire",
-          "items": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "description": "Les nombres à indiquer correspondent aux numéros des couches à extraire.",
+        "addAllLayers": {
+          "type": "boolean",
+          "title": "Add all the layers",
+          "x-i18n-title": { "fr": "Ajouter toutes les couches", "en": "Add all the layers" },
           "layout": {
-            "if" : "parent.parent.data.datasetMode === 'create'"
+            "if": "parent.parent.data.datasetMode === 'create'"
+          }
+        },
+        "listIdsLayers": {
+          "type": "string",
+          "title": "Layers to extract",
+          "x-i18n-title": { "fr": "Couches à extraire", "en": "Layers to extract" },
+          "description": "Separate numbers with commas and intervals with dashes (1,3 for layers 1 and 3, 1-3 for layers 1 to 3).",
+          "x-i18n-description": { "fr": "Séparer les nombres par des virgules et les intervalles par des tirets (1,3 pour les couches 1 et 3, 1-3 pour les couches 1 à 3).", "en": "Separate numbers with commas and intervals with dashes (1,3 for layers 1 and 3, 1-3 for layers 1 to 3)." },
+          "layout": {
+            "if" : "parent.parent.data.datasetMode === 'create' && parent.data.addAllLayers === false"
           }
         }
       }
