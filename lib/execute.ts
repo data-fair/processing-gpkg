@@ -12,6 +12,7 @@ import { fetchHTTP } from './fetch.ts'
 import { streamLayerToDataset } from './stream-layer.ts'
 import { createTmpFile } from './tmp-file.ts'
 import { runCommand } from './spawn-process.ts'
+import { displayingProgress, nbFinalize, trackAddLayer, trackFinalization, type PendingFinalization } from './track.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -38,7 +39,6 @@ type LayersFieldList = Record<number, { name: string, fields: any[], featureCoun
 export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
   stopSignal = new Promise<void>(resolve => { resolveStop = resolve })
-  console.log(stopSignal)
 
   try {
     // Retrieving the contextual elements necessary for processing
@@ -130,7 +130,6 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
       tmpFile = filesGpkg[0]
     }
   } else if (filename.toLowerCase().endsWith('.gpkg')) {
-    await log.info('Récupération du fichier gpkg')
     gpkgFilename = filename
   } else {
     await log.info('Le format n\'est pas pris en charge')
@@ -266,6 +265,9 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
   const idsLayersCreate = []
   const updateConfig = []
   let idStream = 0
+  const pendingFinalizations: PendingFinalization[] = []
+  const streamPendingFinalizations: PendingFinalization[] = []
+  const progressName = 'En attente de la finalisation de la création des jeux de données'
 
   // Checking the availability of the sheets
   for (const idLayer of idsLayers) {
@@ -275,11 +277,11 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       idsLayersCreate.push(idLayer)
     }
   }
-  await log.info('')
 
   for (const idLayer of idsLayersCreate) {
     if (shouldBeStopped) return
 
+    await log.info('---')
     await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 
     const fields = layersFieldList[idLayer].fields
@@ -287,7 +289,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     // Display names and types of the fields for debug
     await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
 
-    let dataset
+    let dataset: { id: string, title: string, href: string }
 
     if (processingConfig.dataset.editableCreate) {
       // Create the dataset, empty
@@ -304,7 +306,15 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
       // Dataset population
       idStream += 1
-      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped)
+      const track = () => {
+        pendingFinalizations.push(trackFinalization(ws, log, dataset.id, dataset.title, { successMessage: 'a été finalisé' },
+          { name: progressName, total: idsLayersCreate.length }, stopSignal))
+      }
+
+      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped, track }
+      streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id, dataset.title, streamInformation, stopSignal))
+
+      // streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id, axios, log, () => shouldBeStopped, dataset.title, track)
     } else {
       const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return
@@ -328,19 +338,32 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
         headers: { ...formData.getHeaders(), 'content-length': contentLength }
       })).data
       await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+
+      pendingFinalizations.push(trackFinalization(ws, log, dataset.id, dataset.title, { successMessage: 'a été finalisé' },
+        { name: progressName, total: idsLayersCreate.length }, stopSignal))
     }
 
     if (shouldBeStopped) return
 
-    // We are waiting for the dataset to finish processing.
-    await ws.waitForJournal(dataset.id, 'finalize-end')
-    await log.info('Jeu de données complet')
-
     const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
     const updateObject = { dataset: datasetObject, idLayer }
     updateConfig.push(updateObject)
-    await log.info('')
+
+    // await log.info('')
   }
+
+  if (streamPendingFinalizations.length > 0 || pendingFinalizations.length > 0) {
+    await log.info('')
+    await log.step('Finalisation des jeux de données')
+    displayingProgress()
+
+    await log.task(progressName)
+    await log.progress(progressName, nbFinalize, idsLayersCreate.length)
+
+    await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
+    await Promise.allSettled(pendingFinalizations.map(p => p.promise))
+  }
+
   return updateConfig
 }
 
@@ -361,7 +384,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
   if (!processingConfig.datasets || processingConfig.datasets.length <= 0) {
-    await log.info('Pas de mises à jour renseignées')
+    await log.warning('Pas de mises à jour renseignées')
     return
   }
 
@@ -471,7 +494,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     if (processingConfig.editableUpdate) {
       idStream += 1
       // We are certain of the ID and title definitions with the previous check.
-      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id!, axios, log, () => shouldBeStopped, dataset.title)
+      await streamLayerToDataset(idStream, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].featureCount, dataset.id!, axios, log, () => shouldBeStopped, dataset.title, () => shouldBeStopped)
     } else {
       const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return

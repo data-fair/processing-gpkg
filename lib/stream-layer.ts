@@ -5,7 +5,7 @@ import type { GpkgProcessingContext } from './context.ts'
 /**
  * Number of lines to send per data transmission
  */
-const BATCH_SIZE = 1000
+const BATCH_SIZE = 5000
 
 /**
  * Allows sending data to the corresponding dataset in batches.
@@ -19,7 +19,7 @@ const BATCH_SIZE = 1000
  * @param isStopped           Function allowing the program to stop if requested
  * @param datasetName         Dataset name, empty by default (use for update)
  */
-export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : GpkgProcessingContext['axios'], log : GpkgProcessingContext['log'], isStopped: () => boolean, datasetName : string = '') => {
+export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : GpkgProcessingContext['axios'], log : GpkgProcessingContext['log'], isStopped: () => boolean, datasetName : string = '', track: () => void) => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
@@ -133,4 +133,6 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   if (corrupted > 0) {
     await log.warning(`${corrupted} lignes sont mal formées, elles ont été ignorées`)
   }
+
+  track()
 }
