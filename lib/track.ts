@@ -5,6 +5,7 @@ export let nbFinalize = 0
 export let nbUpdate = 0
 let displayProgress: boolean = false
 
+// Use to enable or disable progress log display at the right time
 export const displayingProgress = (display = true) => {
   displayProgress = display
 }
@@ -37,6 +38,7 @@ export type PendingFinalization = {
  *                              (used by update flows).
  * @param progressInfo.name     Name of the corresponding task log
  * @param progressInfo.total    Total number of pending datasets
+ * @param stopSignal            Program stop signal
  * @returns A `PendingFinalization` whose `promise` settles once the event arrives,
  *          the run is stopped, the wait times out, or fails — never rejects.
  */
@@ -82,6 +84,22 @@ export const trackFinalization = (
   return { promise, datasetId, datasetTitle }
 }
 
+/**
+ * Allows you to start adding data to the layers in order to process multiple datasets simultaneously.
+ *
+ * @param axios                 Server for API requests
+ * @param datasetId             Id of the dataset whose finalization should be awaited.
+ * @param datasetTitle          Human-readable dataset title, used in log messages.
+ * @param stream.idStream       Stream ID for displaying progress
+ * @param stream.tmpFile        Full path of the file to be processed
+ * @param stream.layerName      Name of the layer from which the data is extracted
+ * @param stream.featureCount   Number of rows of data to extract
+ * @param stream.stop           Function allowing the program to stop if requested
+ * @param stream.track          Function to start a 'finalize-end' wait event with the previous function
+ * @param stopSignal            Program stop signal
+ * @returns A `PendingFinalization` whose `promise` settles once the event arrives,
+ *          the run is stopped, the wait times out, or fails — never rejects.
+ */
 export const trackAddLayer = (
   axios: GpkgProcessingContext['axios'],
   log: GpkgProcessingContext['log'],
@@ -109,12 +127,22 @@ export const trackAddLayer = (
   return { promise, datasetId, datasetTitle }
 }
 
+/**
+ * Allows you to start adding data to the layers in order to process multiple datasets simultaneously.
+ *
+ * @param log           Log system displayed in the user interface.
+ * @param datasetId     Id of the dataset whose finalization should be awaited.
+ * @param datasetTitle  Human-readable dataset title, used in log messages.
+ * @param updateSchema  Schema update function, pre-configured with the correct data
+ * @param stopSignal    Program stop signal
+ * @returns A `PendingFinalization` whose `promise` settles once the event arrives,
+ *          the run is stopped, the wait times out, or fails — never rejects.
+ */
 export const trackUpdateSchema = (
   log: GpkgProcessingContext['log'],
   datasetId: string,
   datasetTitle: string,
   updateSchema: () => Promise<void>,
-  progressInfo: { name: string, total: number },
   stopSignal : Promise<void>
 ): PendingFinalization => {
   const journalPromise = updateSchema()
@@ -136,10 +164,30 @@ export const trackUpdateSchema = (
   return { promise, datasetId, datasetTitle }
 }
 
-export const addUpdate = (log: GpkgProcessingContext['log'], name: string, total: number, datasetId: string, datasetTitle: string, stopSignal : Promise<void>): PendingFinalization => {
+/**
+ * Allows you to count an update across multiple datasets simultaneously;
+ * used for datasets with errors or that do not require modifications.
+ *
+ * @param log           Log system displayed in the user interface.
+ * @param progressName  Name of the relevant progress task
+ * @param total         Total number of tasks to complete for progress
+ * @param datasetId     Id of the dataset whose finalization should be awaited.
+ * @param datasetTitle  Human-readable dataset title, used in log messages.
+ * @param stopSignal    Program stop signal
+ * @returns A `PendingFinalization` whose `promise` settles once the event arrives,
+ *          the run is stopped, the wait times out, or fails — never rejects.
+ */
+export const addUpdate = (
+  log: GpkgProcessingContext['log'],
+  progressName: string,
+  total: number,
+  datasetId: string,
+  datasetTitle: string,
+  stopSignal : Promise<void>
+):PendingFinalization => {
   const addOne = async () => {
     nbUpdate += 1
-    if (displayProgress) await log.progress(name, nbUpdate, total)
+    if (displayProgress) await log.progress(progressName, nbUpdate, total)
   }
 
   const journalPromise = addOne()

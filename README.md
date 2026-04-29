@@ -25,16 +25,17 @@ For this mode, you only need to enter the URL.
 
 | Tab | Field | Description |
 | --- | ----- | ----------- |
-| Liste de jeux de données | `editableCreate` | By default, file-based datasets are created ; by checking this box, editable datasets can be created |
-| Liste de jeux de données | `prefix` | This corresponds to the title of the datasets to be created. The datasets are named according to this prefix and the name of the corresponding layer |
-| Paramètres | `idsLayers` | Identifier of the layers to extract to create datasets |
+| Datasets | `editableCreate` | By default, file-based datasets are created ; by checking this box, editable datasets can be created |
+| Datasets | `prefix` | This corresponds to the title of the datasets to be created. The datasets are named according to this prefix and the name of the corresponding layer |
+| Parameters | `addAllLayers` | Allows you to build datasets directly for all layers of the file |
+| Parameters | `listIdsLayers` | Identifier of the layers to extract to create datasets |
 
 ### update
 
 | Tab | Field | Description |
 | --- | ----- | ----------- |
-| Liste de jeux de données | `editableUpdate` | By default, file-based datasets are updated; checking this box allows you to update editable datasets. However, be careful to select datasets that correspond to the correct mode |
-| Liste de jeux de données | `datasets` | List of datasets to be updated, taking into account the layer number and the schema update forcing |
-| Liste de jeux de données - Jeux à mettre à jour | `dataset` | Name of the dataset to update, selectable from the list of available datasets |
-| Liste de jeux de données - Jeux à mettre à jour | `idLayer` | Layer number used to update the corresponding dataset |
-| Liste de jeux de données - Jeux à mettre à jour | `forceUpdate` | Indicates whether the scheme update should also be forced |
+| Datasets | `editableUpdate` | By default, file-based datasets are updated; checking this box allows you to update editable datasets. However, be careful to select datasets that correspond to the correct mode |
+| Datasets | `datasets` | List of datasets to be updated, taking into account the layer number and the schema update forcing |
+| Datasets - Jeux à mettre à jour | `dataset` | Name of the dataset to update, selectable from the list of available datasets |
+| Datasets - Jeux à mettre à jour | `idLayer` | Layer number used to update the corresponding dataset |
+| Datasets - Jeux à mettre à jour | `forceUpdate` | Indicates whether the scheme update should also be forced |

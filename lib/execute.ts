@@ -460,7 +460,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
         }
 
         // We are certain of the ID and title definitions with the previous check.
-        updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, { name: updateProgressName, total: processingConfig.datasets.length }, stopSignal))
+        updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, stopSignal))
 
         listUpdatesDatasets.push(update)
       } else {
@@ -503,7 +503,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           }
 
           // We are certain of the ID and title definitions with the previous check.
-          updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, { name: updateProgressName, total: processingConfig.datasets.length }, stopSignal))
+          updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, stopSignal))
         } else {
           pendingFinalizations.push(addUpdate(log, updateProgressName, processingConfig.datasets!.length, dataset.id!, dataset.title!, stopSignal))
         }
@@ -516,6 +516,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     }
   }
 
+  // Wait for all schema updates to complete before updating data
   if (updatePendingFinalizations.length > 0 || pendingFinalizations.length > 0) {
     displayingProgress()
     await log.task(updateProgressName)
