@@ -2,10 +2,11 @@ import type { GpkgProcessingContext } from './context.ts'
 import { streamLayerToDataset } from './stream-layer.ts'
 
 export let nbFinalize = 0
+export let nbUpdate = 0
 let displayProgress: boolean = false
 
-export const displayingProgress = () => {
-  displayProgress = true
+export const displayingProgress = (display = true) => {
+  displayProgress = display
 }
 
 export type PendingFinalization = {
@@ -45,7 +46,7 @@ export const trackFinalization = (
   datasetId: string,
   datasetTitle: string,
   opts: { successMessage: string, checkDraft?: boolean },
-  progressInfo: { name: string, total: number },
+  progressInfo: { name: string, total: number, progressType?: 'finalize' | 'update' },
   stopSignal : Promise<void>
 ): PendingFinalization => {
   const journalPromise = ws.waitForJournal(datasetId, 'finalize-end')
@@ -70,8 +71,13 @@ export const trackFinalization = (
       return { ok: false as const, error }
     })
     .finally(async () => {
-      nbFinalize += 1
-      if (displayProgress) await log.progress(progressInfo.name, nbFinalize, progressInfo.total)
+      if (progressInfo.progressType === 'update') {
+        nbUpdate += 1
+        if (displayProgress) await log.progress(progressInfo.name, nbUpdate, progressInfo.total)
+      } else {
+        nbFinalize += 1
+        if (displayProgress) await log.progress(progressInfo.name, nbFinalize, progressInfo.total)
+      }
     })
   return { promise, datasetId, datasetTitle }
 }
@@ -98,6 +104,59 @@ export const trackAddLayer = (
     })
     .catch(async (error: Error) => {
       await log.warning(`L'envoi de données vers le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
+      return { ok: false as const, error }
+    })
+  return { promise, datasetId, datasetTitle }
+}
+
+export const trackUpdateSchema = (
+  log: GpkgProcessingContext['log'],
+  datasetId: string,
+  datasetTitle: string,
+  updateSchema: () => Promise<void>,
+  progressInfo: { name: string, total: number },
+  stopSignal : Promise<void>
+): PendingFinalization => {
+  const journalPromise = updateSchema()
+    .then(journal => ({ kind: 'event' as const, journal }))
+  const stopPromise = stopSignal.then(() => ({ kind: 'stopped' as const }))
+
+  const promise = Promise.race([journalPromise, stopPromise])
+    .then(async (result) => {
+      if (result.kind === 'stopped') {
+        return { ok: false as const, error: new Error('stopped') }
+      }
+      const journal: any = result.journal
+      return { ok: true as const, journal }
+    })
+    .catch(async (error: Error) => {
+      await log.warning(`La mise à jour du schéma pour le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
+      return { ok: false as const, error }
+    })
+  return { promise, datasetId, datasetTitle }
+}
+
+export const addUpdate = (log: GpkgProcessingContext['log'], name: string, total: number, datasetId: string, datasetTitle: string, stopSignal : Promise<void>): PendingFinalization => {
+  const addOne = async () => {
+    nbUpdate += 1
+    if (displayProgress) await log.progress(name, nbUpdate, total)
+  }
+
+  const journalPromise = addOne()
+    .then(journal => ({ kind: 'event' as const, journal }))
+  const stopPromise = stopSignal.then(() => ({ kind: 'stopped' as const }))
+
+  const promise = Promise.race([journalPromise, stopPromise])
+    .then(async (result) => {
+      if (result.kind === 'stopped') {
+        return { ok: false as const, error: new Error('stopped') }
+      }
+      const journal: any = result.journal
+      await log.info(`Le jeu de données "${datasetTitle}" a été finalisé`)
+      return { ok: true as const, journal }
+    })
+    .catch(async (error: Error) => {
+      await log.warning(`La mise à jour du schéma pour le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
       return { ok: false as const, error }
     })
   return { promise, datasetId, datasetTitle }

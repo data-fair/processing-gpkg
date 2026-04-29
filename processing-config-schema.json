@@ -185,7 +185,7 @@
           "description": "Separate numbers with commas and intervals with dashes (1,3 for layers 1 and 3, 1-3 for layers 1 to 3).",
           "x-i18n-description": { "fr": "Séparer les nombres par des virgules et les intervalles par des tirets (1,3 pour les couches 1 et 3, 1-3 pour les couches 1 à 3).", "en": "Separate numbers with commas and intervals with dashes (1,3 for layers 1 and 3, 1-3 for layers 1 to 3)." },
           "layout": {
-            "if" : "parent.parent.data.datasetMode === 'create' && parent.data.addAllLayers === false"
+            "if" : "parent.parent.data.datasetMode === 'create' && parent.data.addAllLayers !== true"
           }
         }
       }
