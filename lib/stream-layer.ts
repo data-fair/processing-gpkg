@@ -19,7 +19,7 @@ const BATCH_SIZE = 5000
  * @param isStopped           Function allowing the program to stop if requested
  * @param datasetName         Dataset name, empty by default (use for update)
  */
-export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : GpkgProcessingContext['axios'], log : GpkgProcessingContext['log'], isStopped: () => boolean, datasetName : string = '', track: () => void) => {
+export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : GpkgProcessingContext['axios'], log : GpkgProcessingContext['log'], isStopped: () => boolean, datasetName : string = '') => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
@@ -101,8 +101,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
         if (batch.length >= BATCH_SIZE) {
           await flushBatch()
         }
-      } catch (err : any) {
-        console.error('Erreur', lineCount, err.message)
+      } catch {
         // If the JSON is invalid, no error is triggered; the process moves to the next line.
         await log.debug(`${idStream} ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}. Lignes malformées ignorées (Ligne ${lineCount})`)
       }
@@ -139,6 +138,4 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   if (corrupted > 0) {
     await log.warning(`${corrupted} lignes sont mal formées, elles ont été ignorées`)
   }
-
-  track()
 }

@@ -36,6 +36,10 @@ describe('Geopackage processing', () => {
   })
 
   it('should run a task with a gpkg file to create an edit dataset', async function () {
+    // WARNING !!!
+    console.warn('Bulk_lines errors may appear (undefined). This is a 413 (Request Entity Too Large) error, which is not acceptable locally.')
+    console.warn('To fix this, you need to change the BATCH_SIZE variable in stream-layer.ts.')
+
     const context = testUtils.context({
       pluginConfig: {},
       processingConfig: {

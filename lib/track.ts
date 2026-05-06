@@ -95,7 +95,6 @@ export const trackFinalization = (
  * @param stream.layerName      Name of the layer from which the data is extracted
  * @param stream.featureCount   Number of rows of data to extract
  * @param stream.stop           Function allowing the program to stop if requested
- * @param stream.track          Function to start a 'finalize-end' wait event with the previous function
  * @param stopSignal            Program stop signal
  * @returns A `PendingFinalization` whose `promise` settles once the event arrives,
  *          the run is stopped, the wait times out, or fails — never rejects.
@@ -105,10 +104,10 @@ export const trackAddLayer = (
   log: GpkgProcessingContext['log'],
   datasetId: string,
   datasetTitle: string,
-  stream: { idStream: number, tmpFile: string, layerName: string, featureCount: number, stop: () => boolean, track: () => void },
+  stream: { idStream: number, tmpFile: string, layerName: string, featureCount: number, stop: () => boolean },
   stopSignal : Promise<void>
 ): PendingFinalization => {
-  const journalPromise = streamLayerToDataset(stream.idStream, stream.tmpFile, stream.layerName, stream.featureCount, datasetId, axios, log, stream.stop, datasetTitle, stream.track)
+  const journalPromise = streamLayerToDataset(stream.idStream, stream.tmpFile, stream.layerName, stream.featureCount, datasetId, axios, log, stream.stop, datasetTitle)
     .then(journal => ({ kind: 'event' as const, journal }))
   const stopPromise = stopSignal.then(() => ({ kind: 'stopped' as const }))
 
@@ -121,7 +120,6 @@ export const trackAddLayer = (
       return { ok: true as const, journal }
     })
     .catch(async (error: Error) => {
-      console.log('ERREUR : ', error)
       await log.warning(`L'envoi de données vers le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
       return { ok: false as const, error }
     })

@@ -11,7 +11,7 @@ import type { GpkgProcessingContext } from './context.ts'
 import { fetchHTTP } from './fetch.ts'
 import { createTmpFile } from './tmp-file.ts'
 import { runCommand } from './spawn-process.ts'
-import { addUpdate, displayingProgress, nbFinalize, nbUpdate, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
+import { addUpdate, displayingProgress, nbUpdate, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -276,9 +276,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
   const idsLayersCreate = []
   const updateConfig = []
   let idStream = 0
-  const pendingFinalizations: PendingFinalization[] = []
   const streamPendingFinalizations: PendingFinalization[] = []
-  const progressName = 'En attente de la finalisation de la création des jeux de données'
 
   // Checking the availability of the sheets
   for (const idLayer of idsLayers) {
@@ -295,14 +293,14 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     await log.info('---')
     await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
 
-    const fields = layersFieldList[idLayer].fields
-
-    // Display names and types of the fields for debug
-    await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
-
-    let dataset: { id: string, title: string, href: string }
+    let dataset : { id: string, title: string, href: string, page: string }
 
     if (processingConfig.dataset.editableCreate) {
+      const fields = layersFieldList[idLayer].fields
+
+      // Display names and types of the fields for debug
+      await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
+
       // Create the dataset, empty
       dataset = (await axios.post('api/v1/datasets', {
         title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
@@ -318,18 +316,13 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
       // Dataset population
       idStream += 1
-      const track = () => {
-        pendingFinalizations.push(trackFinalization(ws, log, dataset.id, dataset.title, { successMessage: 'a été finalisé' },
-          { name: progressName, total: idsLayersCreate.length }, stopSignal))
-      }
-      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped, track }
+      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped }
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id, dataset.title, streamInformation, stopSignal))
     } else {
       const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return
 
       const formData = new FormData()
-      formData.append('schema', JSON.stringify(fields))
       formData.append('origin', processingConfig.url)
       formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
@@ -348,9 +341,6 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
         headers: { ...formData.getHeaders(), 'content-length': contentLength }
       })).data
       await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
-
-      pendingFinalizations.push(trackFinalization(ws, log, dataset.id, dataset.title, { successMessage: 'a été finalisé' },
-        { name: progressName, total: idsLayersCreate.length }, stopSignal))
     }
 
     if (shouldBeStopped) return
@@ -358,20 +348,10 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
     const updateObject = { dataset: datasetObject, idLayer }
     updateConfig.push(updateObject)
-
-    // await log.info('')
   }
 
-  if (streamPendingFinalizations.length > 0 || pendingFinalizations.length > 0) {
-    await log.info('')
-    await log.step('Finalisation des jeux de données')
-    displayingProgress()
-
-    await log.task(progressName)
-    await log.progress(progressName, nbFinalize, idsLayersCreate.length)
-
+  if (streamPendingFinalizations.length > 0) {
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
-    await Promise.allSettled(pendingFinalizations.map(p => p.promise))
   }
 
   return updateConfig
@@ -398,6 +378,10 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     return
   }
 
+  // ---------------------------------
+  // SECURITY (normally not necessary): we verify that we have the good type of dataset
+  // ---------------------------------
+
   // We add size=10000 to ensure that all datasets are retrieved (12 by default)
   const datasets : { id: string }[] = (await axios.get(`api/v1/datasets/?size=10000&${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
   const datasetsIds = new Set<string>(datasets.map(d => d.id))
@@ -411,16 +395,16 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       continue
     }
 
-    // Check if the sheet is available
+    // Check if the layer is available
     if (!(update.idLayer in layersFieldList)) {
-      await log.warning(`La couche ${update.idLayer} n'est pas présente dans les feuilles disponibles`)
+      await log.warning(`La couche ${update.idLayer} n'est pas présente dans les couches disponibles`)
       await log.info('')
       continue
     }
 
     // Check if the correct update operation can be performed, to avoid permission errors
     if (!(datasetsIds.has(update.dataset.id))) {
-      await log.warning(`Le jeu de données ${update.dataset.title} n'est pas de type fichier`)
+      await log.warning(`Le jeu de données ${update.dataset.title} n'est pas de type ${processingConfig.editableUpdate ? 'éditable' : 'fichier'}`)
       await log.info('')
       continue
     }
@@ -432,22 +416,21 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
   const updateProgressName = 'En attente de la finalisation de la mise à jour des schémas'
   const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, idLayer: number, formData?: FormData }[] = []
 
-  // Schema verification
-  for (const update of processingConfig.datasets) {
+  for (const update of datasetsUpdate) {
+    // Schema verification
     if (shouldBeStopped) return
 
     const dataset = update.dataset
     const idLayer = update.idLayer
-    const formData = new FormData()
 
-    // Retrieving the dataset schema
-    const datasetSchema : { key: string, type: string }[] = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
-    if (shouldBeStopped) return
+    if (processingConfig.editableUpdate) {
+      // Retrieving the dataset schema
+      const datasetSchema : { key: string, type: string }[] = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
+      if (shouldBeStopped) return
 
-    if (update.forceUpdate) {
-      await log.info(`Mise à jour forcée du schéma du jeu de données ${dataset.title}`)
+      if (update.forceUpdate) {
+        await log.info(`Mise à jour forcée du schéma du jeu de données ${dataset.title}`)
 
-      if (processingConfig.editableUpdate) {
         const updateSchema = async () => {
           // Drop the old data
           await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
@@ -476,37 +459,29 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
         listUpdatesDatasets.push(update)
       } else {
-        formData.append('schema', JSON.stringify(layersFieldList[idLayer].fields))
+        // Check if the schemas match.
+        await log.info(`Vérification de la compatibilité des schémas pour le jeu de données ${dataset.title} et la couche ${idLayer}`)
 
-        listUpdatesDatasets.push({ ...update, formData })
-      }
-    } else {
-      // Check if the schemas match.
-      await log.info(`Vérification de la compatibilité des schémas pour le jeu de données ${dataset.title} et la couche ${idLayer}`)
+        let compatible = true
+        const datasetSchemaMap = new Map(datasetSchema.map(datasetField => [datasetField.key.toLowerCase(), datasetField.type.toLowerCase()]))
+        // We don't establish equality in both directions because of the attributes added during the processing of the dataset, such as the update date, for example.
+        for (const field of layersFieldList[idLayer].fields) {
+          if (shouldBeStopped) return
 
-      let compatible = true
-      const datasetSchemaMap = new Map(datasetSchema.map(datasetField => [datasetField.key, datasetField.type]))
-      console.log('schema', datasetSchemaMap)
+          const typeFieldDataset = datasetSchemaMap.get(field.name.toLowerCase())
+          await log.debug(`Type field dataset : ${typeFieldDataset} - File : ${field.name} ${field.type}`)
 
-      // We don't establish equality in both directions because of the attributes added during the processing of the dataset, such as the update date, for example.
-      for (const field of layersFieldList[idLayer].fields) {
-        if (shouldBeStopped) return
-
-        const typeFieldDataset = datasetSchemaMap.get(field.name)
-        await log.info(`Type field dataset : ${typeFieldDataset} - File : ${field.name} ${field.type}`)
-
-        if (typeFieldDataset !== field.type) {
-          compatible = false
-          break
+          if (typeFieldDataset !== field.type.toLowerCase()) {
+            compatible = false
+            break
+          }
         }
-      }
 
-      if (compatible) {
-        listUpdatesDatasets.push(update)
+        if (compatible) {
+          listUpdatesDatasets.push(update)
 
-        // Drop the old data
-        if (shouldBeStopped) return
-        if (processingConfig.editableUpdate) {
+          // Drop the old data
+          if (shouldBeStopped) return
           const updateSchema = async () => {
             await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
 
@@ -517,19 +492,22 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           // We are certain of the ID and title definitions with the previous check.
           updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, stopSignal))
         } else {
+          await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
+          await log.info('')
           pendingFinalizations.push(addUpdate(log, updateProgressName, processingConfig.datasets!.length, dataset.id!, dataset.title!, stopSignal))
+          continue
         }
-      } else {
-        await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
-        await log.info('')
-        pendingFinalizations.push(addUpdate(log, updateProgressName, processingConfig.datasets!.length, dataset.id!, dataset.title!, stopSignal))
-        continue
       }
+    } else {
+      if (update.forceUpdate) {
+        await log.info(`Mise à jour forcée du schéma du jeu de données ${dataset.title}`)
+      }
+      listUpdatesDatasets.push(update)
     }
   }
 
   // Wait for all schema updates to complete before updating data
-  if (updatePendingFinalizations.length > 0 || pendingFinalizations.length > 0) {
+  if (processingConfig.editableUpdate && (updatePendingFinalizations.length > 0 || pendingFinalizations.length > 0)) {
     displayingProgress()
     await log.task(updateProgressName)
     await log.progress(updateProgressName, nbUpdate, processingConfig.datasets!.length)
@@ -537,15 +515,12 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     await Promise.allSettled(updatePendingFinalizations.map(p => p.promise))
     await Promise.allSettled(pendingFinalizations.map(p => p.promise))
     displayingProgress(false)
+
+    await log.info('')
+    await log.info('---')
   }
 
-  await log.info('')
-  await log.info('---')
-  await log.info('')
-
-  pendingFinalizations.length = 0
   const streamPendingFinalizations: PendingFinalization[] = []
-  const progressName = 'En attente de la finalisation de la mise à jour des jeux de données'
   let idStream = 0
 
   // We process each dataset to be updated
@@ -554,21 +529,16 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
     const dataset = update.dataset
     const idLayer = update.idLayer
-    const formData = update.formData ?? new FormData()
+    const formData = new FormData()
 
+    await log.info('')
     await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer}`)
 
     // Data update
     if (processingConfig.editableUpdate) {
       idStream += 1
 
-      // We are certain of the ID and title definitions with the previous check.
-      const track = () => {
-        pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'a été finalisé' },
-          { name: progressName, total: listUpdatesDatasets.length }, stopSignal))
-      }
-
-      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped, track }
+      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped }
 
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id!, dataset.title!, streamInformation, stopSignal))
     } else {
@@ -584,16 +554,12 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
       await axios({
         method: 'post',
-        url: `api/v1/datasets/${dataset.id}`,
+        url: `api/v1/datasets/${dataset.id}${update.forceUpdate ? '' : '?draft=true'}`,
         data: formData,
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
         headers: { ...formData!.getHeaders(), 'content-length': contentLength }
       })
-
-      // We are certain of the ID and title definitions with the previous check.
-      pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'a été mis à jour' },
-        { name: progressName, total: listUpdatesDatasets.length }, stopSignal))
     }
 
     if (shouldBeStopped) return
@@ -602,15 +568,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     await log.info('')
   }
 
-  if (streamPendingFinalizations.length > 0 || pendingFinalizations.length > 0) {
-    await log.info('')
-    await log.step('Finalisation des mises à jour')
-    displayingProgress()
-
-    await log.task(progressName)
-    await log.progress(progressName, nbFinalize, listUpdatesDatasets.length)
-
+  if (streamPendingFinalizations.length > 0) {
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
-    await Promise.allSettled(pendingFinalizations.map(p => p.promise))
   }
 }
