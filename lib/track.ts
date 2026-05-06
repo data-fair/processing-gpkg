@@ -121,6 +121,7 @@ export const trackAddLayer = (
       return { ok: true as const, journal }
     })
     .catch(async (error: Error) => {
+      console.log('ERREUR : ', error)
       await log.warning(`L'envoi de données vers le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
       return { ok: false as const, error }
     })

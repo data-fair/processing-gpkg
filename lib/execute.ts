@@ -169,6 +169,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
       }
 
       let typeCorrect = layers[i].fields[j].type.toLowerCase()
+      let format
 
       // Check the types
       if (typeCorrect.includes('integer')) {
@@ -179,11 +180,21 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
         typeCorrect = 'number'
       }
 
+      if (typeCorrect.includes('date')) {
+        typeCorrect = 'string'
+        format = 'date'
+      }
+
+      if (layers[i].fields[j].subType && layers[i].fields[j].subType.toLowerCase().includes('boolean')) {
+        typeCorrect = 'boolean'
+      }
+
       layers[i].fields[j] = {
         ...layers[i].fields[j],
         key: layers[i].fields[j].name,
         type: typeCorrect,
-        'x-transform': { type: typeCorrect }
+        format,
+        'x-transform': { type: typeCorrect, format }
       }
     }
 
@@ -298,6 +309,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
         description: '',
         isRest: true,
         schema: fields,
+        origin: processingConfig.url,
         extras: { processingId }
       })).data
       await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
@@ -318,7 +330,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
       const formData = new FormData()
       formData.append('schema', JSON.stringify(fields))
-      console.log('Schema : ', JSON.stringify(fields))
+      formData.append('origin', processingConfig.url)
       formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
       const getLength = util.promisify(formData.getLength.bind(formData))

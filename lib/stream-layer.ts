@@ -34,15 +34,19 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
     if (batch.length === 0) return
     const toSend = batch.splice(0)
     total += toSend.length
-    await axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend)
-
+    try {
+      await axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend)
+    } catch (err: any) {
+      await log.error(`Erreur bulk_lines : ${JSON.stringify(err.response?.data)}`)
+      throw err
+    }
     await log.progress(progressName, total, layerFeatureCount)
   }
 
   // Launch a child process to retrieve the data
   // -f GeoJSONSeq : Output format, one JSON feature per line
   // !! We don't use `runCommand` here for optimization reasons! We load and unload the data little by little rather than all at once
-  const proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '/vsistdout/', tmpFile, layerName])
+  const proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerName])
 
   // Creating listeners to stop the child process, retrieve its error outputs, and system errors
   const stderrChunks: Buffer[] = []
@@ -88,6 +92,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
         }
 
         batch.push({
+          // name: feature.properties.CdOuvragePrel
           ...feature.properties,
           geometry: JSON.stringify(feature.geometry)
         })
@@ -96,9 +101,10 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
         if (batch.length >= BATCH_SIZE) {
           await flushBatch()
         }
-      } catch {
+      } catch (err : any) {
+        console.error('Erreur', lineCount, err.message)
         // If the JSON is invalid, no error is triggered; the process moves to the next line.
-        await log.debug(`Ligne malformée ignorée (ligne ${lineCount})`)
+        await log.debug(`${idStream} ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}. Lignes malformées ignorées (Ligne ${lineCount})`)
       }
     }
   }
