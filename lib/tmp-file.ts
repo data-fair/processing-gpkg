@@ -21,7 +21,7 @@ export const createTmpFile = async (dir : string, tmpFile : string, layerName : 
     await log.info('Création du fichier temporaire')
     if (isStopped()) return
 
-    await runCommand('ogr2ogr', ['-f', 'GeoJSON', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', tmpFileGeoJSON, tmpFile, layerName])
+    await runCommand('ogr2ogr', ['-f', 'GeoJSON', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', tmpFileGeoJSON, tmpFile, layerName])
   }
 
   return tmpFileGeoJSON
