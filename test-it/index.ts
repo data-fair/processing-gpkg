@@ -87,18 +87,38 @@ describe('Geopackage processing', () => {
       processingConfig: {
         datasetMode: 'create',
         dataset: {
-          prefix: 'Test-file-gpkg',
           editableCreate: false
         },
-        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
-        listIdsLayers: '2,4,6'
+        layers: [
+          {
+            add: true,
+            nb: 2,
+            name: 'commune',
+            lines: 34877,
+            titleEditable: 'test-file-2'
+          },
+          {
+            add: true,
+            nb: 4,
+            name: 'region',
+            lines: 19,
+            titleEditable: 'test-file-4'
+          },
+          {
+            add: true,
+            nb: 6,
+            name: 'epci',
+            lines: 1266,
+            titleEditable: 'test-file-6'
+          }
+        ]
+        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e'
       },
       tmpDir: 'test-data/'
     }, config, false)
 
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
-    assert.equal(context.processingConfig.dataset.prefix, 'Test-file-gpkg')
   })
   */
 
@@ -110,9 +130,17 @@ describe('Geopackage processing', () => {
       processingConfig: {
         datasetMode: 'create',
         dataset: {
-          prefix: 'Test-gpkg',
           editableCreate: true
         },
+        layers: [
+          {
+            add: true,
+            nb: 1,
+            name: 'circonscritptions_lgislatives_74',
+            lines: 6,
+            titleEditable: 'test-zip'
+          }
+        ]
         url: 'https://www.data.gouv.fr/api/1/datasets/r/26c5be7d-56d2-4d1f-a9ce-b800f0b0f16e',
         listIdsLayers: '1'
       },
@@ -121,7 +149,6 @@ describe('Geopackage processing', () => {
 
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
-    assert.equal(context.processingConfig.dataset.prefix, 'Test-gpkg')
   })
   */
 })

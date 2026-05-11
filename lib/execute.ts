@@ -245,8 +245,6 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
   const layersList: LayersList[] = []
 
   for (let layer of processingConfig.layers as LayersList[]) {
-    console.log('Couche : ', layer)
-
     if (layer.add || processingConfig.addAllLayers) {
       layer = {
         ...layer,
@@ -256,7 +254,6 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       layersList.push(layer)
     }
   }
-  console.log('Liste des couches : ', layersList)
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
   if (layersList.length <= 0) {
@@ -264,22 +261,23 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     return
   }
 
-  await log.info(`Extraction des couches ${layersList.map(layer => (layer.nb)).join(',')}`)
-
   const layersListCreate: LayersList[] = []
   const updateConfig = []
   let idStream = 0
   const streamPendingFinalizations: PendingFinalization[] = []
 
-  // SECURITY (normally not necessary) : Checking the availability of the layers
+  // SECURITY (normally not necessary) : Checking the availability of the layers (in the event that the download URL has been changed accidentally)
   for (const layer of layersList) {
     const idLayer = layer.nb
-    if (!(idLayer in layersFieldList)) {
-      await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
+    const nameLayer = layer.name
+    if (!(idLayer in layersFieldList && layersFieldList[idLayer].name === nameLayer)) {
+      await log.warning(`La couche ${idLayer} - ${nameLayer} n'est pas présente dans les couches disponibles`)
     } else {
       layersListCreate.push(layer)
     }
   }
+
+  await log.info(`Extraction des couches ${layersListCreate.map(layer => (`${layer.nb} - ${layer.name}`)).join(', ')}`)
 
   for (const layer of layersListCreate) {
     if (shouldBeStopped) return
@@ -340,7 +338,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     if (shouldBeStopped) return
 
     const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-    const updateObject = { dataset: datasetObject, idLayer: layer.nb }
+    const updateObject = { dataset: datasetObject, layer: { nb: layer.nb, name: layer.name } }
     updateConfig.push(updateObject)
   }
 
@@ -389,9 +387,9 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       continue
     }
 
-    // Check if the layer is available
-    if (!(update.idLayer in layersFieldList)) {
-      await log.warning(`La couche ${update.idLayer} n'est pas présente dans les couches disponibles`)
+    // SECURITY (normally not necessary) : Checking the availability of the layers (in the event that the download URL has been changed accidentally)
+    if (!(update.layer.nb! in layersFieldList && update.layer.name! === layersFieldList[update.layer.nb!].name)) {
+      await log.warning(`La couche ${update.layer.nb} - ${update.layer.name} n'est pas présente dans les couches disponibles`)
       await log.info('')
       continue
     }
@@ -408,14 +406,15 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
   const pendingFinalizations: PendingFinalization[] = []
   const updatePendingFinalizations: PendingFinalization[] = []
   const updateProgressName = 'En attente de la finalisation de la mise à jour des schémas'
-  const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, idLayer: number, formData?: FormData }[] = []
+  const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, layer: { nb?: number, name?: string }, formData?: FormData }[] = []
 
   for (const update of datasetsUpdate) {
     // Schema verification
     if (shouldBeStopped) return
 
     const dataset = update.dataset
-    const idLayer = update.idLayer
+    const idLayer = update.layer.nb!
+    const nameLayer = update.layer.name!
 
     if (processingConfig.editableUpdate) {
       // Retrieving the dataset schema
@@ -454,7 +453,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
         listUpdatesDatasets.push(update)
       } else {
         // Check if the schemas match.
-        await log.info(`Vérification de la compatibilité des schémas pour le jeu de données ${dataset.title} et la couche ${idLayer}`)
+        await log.info(`Vérification de la compatibilité des schémas pour le jeu de données ${dataset.title} et la couche ${idLayer} - ${nameLayer}`)
 
         let compatible = true
         const datasetSchemaMap = new Map(datasetSchema.map(datasetField => [datasetField.key.toLowerCase(), datasetField.type.toLowerCase()]))
@@ -486,7 +485,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           // We are certain of the ID and title definitions with the previous check.
           updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, stopSignal))
         } else {
-          await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} ne sont pas compatibles`)
+          await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} - ${nameLayer} ne sont pas compatibles`)
           await log.info('')
           pendingFinalizations.push(addUpdate(log, updateProgressName, processingConfig.datasets!.length, dataset.id!, dataset.title!, stopSignal))
           continue
@@ -522,11 +521,12 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     if (shouldBeStopped) return
 
     const dataset = update.dataset
-    const idLayer = update.idLayer
+    const idLayer = update.layer.nb!
+    const nameLayer = update.layer.name!
     const formData = new FormData()
 
     await log.info('')
-    await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer}`)
+    await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer} - ${nameLayer}`)
 
     // Data update
     if (processingConfig.editableUpdate) {

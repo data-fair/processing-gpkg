@@ -119,13 +119,13 @@
                       "children": [
                         "dataset"
                       ],
-                      "cols": 5
+                      "cols": 4
                     },
                     {
                       "children": [
-                        "idLayer"
+                        "layer"
                       ],
-                      "cols": 3
+                      "cols": 4
                     },
                     {
                       "children": [
@@ -136,7 +136,7 @@
                   ],
                 "required": [
                   "dataset",
-                  "idLayer"
+                  "layer"
                 ],
                 "properties": {
                   "dataset": {
@@ -168,11 +168,33 @@
                       }
                     }
                   },
-                  "idLayer": {
-                    "type": "integer",
-                    "title": "Layer number",
-                    "x-i18n-title": { "fr": "Numéro de la couche", "en": "Layer number" },
-                    "minimum": 1
+                  "layer": {
+                    "type": "object",
+                    "title": "Layer",
+                    "x-i18n-title": {
+                      "fr": "Couche",
+                      "en": "Layer"
+                    },
+                    "properties": {
+                      "nb": {
+                        "type": "integer",
+                        "title": "Layer identifier",
+                        "x-i18n-title": {"fr": "Identifiant de la couche", "en": "Layer identifier"}
+                      },
+                      "name": {
+                        "type": "string",
+                        "title": "Layer name",
+                        "x-i18n-title": {"fr": "Nom de la couche", "en": "Layer name"}
+                      }
+                    },
+                    "layout": {
+                      "getItems": {
+                        "expr": "parent.parent.parent.parent.data.layers || []",
+                        "itemsResults": "data",
+                        "itemTitle": "item.name",
+                        "itemKey": "item.nb"
+                      }
+                    }
                   },
                   "forceUpdate": {
                     "type" : "boolean",
@@ -259,17 +281,20 @@
           "properties": {
             "add": {
               "type": "string",
-              "title": "Ajouter",
+              "title": "Add",
+              "x-i18n-title": {"fr": "Ajouter", "en": "add"},
               "readOnly": true
             },
             "nb": {
               "type": "string",
-              "title": "Numéro",
+              "title": "Number",
+              "x-i18n-title": {"fr": "Numéro", "en": "Number"},
               "readOnly": true
             },
             "name": {
               "type": "string",
-              "title": "Nom de la couche",
+              "title": "Layer name",
+              "x-i18n-title": {"fr": "Nom de la couche", "en": "Layer name"},
               "readOnly": true
             },
             "lines": {
@@ -279,18 +304,28 @@
             },
             "titleEditable": {
               "type": "string",
-              "title": "Titre du jeu de données correspondant",
+              "title": "Title of the corresponding dataset",
+              "x-i18n-title": {"fr": "Titre du jeu de données correspondant", "en": "Title of the corresponding dataset"},
               "readOnly": true,
-              "description": "Par défaut, le titre du jeu de données correspond au nom de la couche",
+              "description": "By default, the dataset title corresponds to the layer name",
+              "x-i18n-description": {
+                "fr": "Par défaut, le titre du jeu de données correspond au nom de la couche",
+                "en": "By default, the dataset title corresponds to the layer name"
+              },
               "layout": {
                 "if": "parent.parent.parent.parent.data.datasetMode === 'create'"
               }
             },
             "titleReadOnly": {
               "type": "string",
-              "title": "Titre du jeu de données correspondant",
+              "title": "Title of the corresponding dataset",
+              "x-i18n-title": {"fr": "Titre du jeu de données correspondant", "en": "Title of the corresponding dataset"},
               "readOnly": true,
-              "description": "Par défaut, le titre du jeu de données correspond au nom de la couche",
+              "description": "By default, the dataset title corresponds to the layer name",
+              "x-i18n-description": {
+                "fr": "Par défaut, le titre du jeu de données correspond au nom de la couche",
+                "en": "By default, the dataset title corresponds to the layer name"
+              },
               "layout": {
                 "if": "parent.parent.parent.parent.data.datasetMode !== 'create'"
               }
