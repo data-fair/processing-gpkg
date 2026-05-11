@@ -45,18 +45,38 @@ describe('Geopackage processing', () => {
       processingConfig: {
         datasetMode: 'create',
         dataset: {
-          prefix: 'Test-edit-gpkg',
           editableCreate: true
         },
-        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
-        listIdsLayers: '2,4,6'
+        layers: [
+          {
+            add: true,
+            nb: 2,
+            name: 'commune',
+            lines: 34877,
+            titleEditable: 'test-edit-2'
+          },
+          {
+            add: true,
+            nb: 4,
+            name: 'region',
+            lines: 19,
+            titleEditable: 'test-edit-4'
+          },
+          {
+            add: true,
+            nb: 6,
+            name: 'epci',
+            lines: 1266,
+            titleEditable: 'test-edit-6'
+          }
+        ],
+        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e'
       },
       tmpDir: 'test-data/'
     }, config, false)
 
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
-    assert.equal(context.processingConfig.dataset.prefix, 'Test-edit-gpkg')
   })
 
   // We've kept the file dataset test in the comments, as it's too large for local testing.

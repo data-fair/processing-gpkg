@@ -7,7 +7,7 @@ import fs from 'fs-extra'
 import path from 'path'
 import FormData from 'form-data'
 
-import type { GpkgProcessingContext } from './context.ts'
+import type { LayersList, GpkgProcessingContext } from './context.ts'
 import { fetchHTTP } from './fetch.ts'
 import { createTmpFile } from './tmp-file.ts'
 import { runCommand } from './spawn-process.ts'
@@ -52,13 +52,22 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
     if (!layersFieldList) return
 
     if (processingConfig.datasetMode === 'create') {
-      const updateConfig = await createDatasets(context, layersFieldList, tmpFile)
+      const result = await createDatasets(context, layersFieldList, tmpFile)
 
-      if (updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: updateConfig, editableUpdate: processingConfig.dataset.editableCreate } as any)
+      if (result?.updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: result.updateConfig, layers: result.layersList, editableUpdate: processingConfig.dataset!.editableCreate } as any)
     } else if (processingConfig.datasetMode === 'update') {
       await updateDatasets(context, layersFieldList, tmpFile)
     } else {
-      await patchConfig({ datasetMode: 'create', dataset: { prefix: '' } })
+      const createConfig: LayersList[] = Object.keys(layersFieldList).map(idLayer => ({
+        add: false,
+        nb: Number(idLayer),
+        name: layersFieldList[Number(idLayer)].name,
+        lines: layersFieldList[Number(idLayer)].featureCount,
+        titleEditable: '',
+        titleReadOnly: ''
+      }))
+
+      await patchConfig({ datasetMode: 'create', haveList: true, layers: createConfig, dataset: { editableCreate: false } } as any)
     }
   } finally {
     // Settle the stop signal so any continuation chained on it (the `stopSignal.then(...)`
@@ -233,77 +242,62 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
   const processingConfig = rawConfig as CreateDatasets & Parameters
   await log.step('Construction des jeux de données')
 
-  let idsLayers: number[] = []
+  const layersList: LayersList[] = []
 
-  // If we want to add all the layers, we add all the identifiers to the list.
-  if (processingConfig.addAllLayers) {
-    idsLayers = Object.keys(layersFieldList).map(layer => Number(layer))
-  } else {
-    processingConfig.listIdsLayers = processingConfig.listIdsLayers ? processingConfig.listIdsLayers.replaceAll(' ', '') : ''
+  for (let layer of processingConfig.layers as LayersList[]) {
+    console.log('Couche : ', layer)
 
-    const listParts = processingConfig.listIdsLayers.split(',')
-
-    for (const part of listParts) {
-      const idLayer = Number(part)
-
-      if (idLayer && idLayer > 0) {
-        idsLayers.push(idLayer)
-      } else {
-        const interval = part.split('-')
-
-        if (interval.length === 2) {
-          const start = Number(interval[0])
-          const end = Number(interval[1])
-
-          if (start && start > 0 && end && end >= start) {
-            for (let id = start; id <= end; id++) {
-              idsLayers.push(id)
-            }
-          }
-        }
+    if (layer.add || processingConfig.addAllLayers) {
+      layer = {
+        ...layer,
+        title: layer.titleEditable ?? (layer.name ?? 'untitled'),
+        titleReadOnly: layer.titleEditable ?? (layer.name ?? 'untitled')
       }
+      layersList.push(layer)
     }
   }
+  console.log('Liste des couches : ', layersList)
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
-  if (idsLayers.length <= 0) {
+  if (layersList.length <= 0) {
     await log.warning('Pas de couches renseignées')
     return
   }
 
-  await log.info(`Extraction des couches ${idsLayers}`)
+  await log.info(`Extraction des couches ${layersList.map(layer => (layer.nb)).join(',')}`)
 
-  const idsLayersCreate = []
+  const layersListCreate: LayersList[] = []
   const updateConfig = []
   let idStream = 0
   const streamPendingFinalizations: PendingFinalization[] = []
 
-  // Checking the availability of the sheets
-  for (const idLayer of idsLayers) {
+  // SECURITY (normally not necessary) : Checking the availability of the layers
+  for (const layer of layersList) {
+    const idLayer = layer.nb
     if (!(idLayer in layersFieldList)) {
       await log.warning(`La couche ${idLayer} n'est pas présente dans les couches disponibles`)
     } else {
-      idsLayersCreate.push(idLayer)
+      layersListCreate.push(layer)
     }
   }
 
-  for (const idLayer of idsLayersCreate) {
+  for (const layer of layersListCreate) {
     if (shouldBeStopped) return
 
     await log.info('---')
-    await log.info(`Création du jeu de données pour la couche ${idLayer} - ${layersFieldList[idLayer].name}`)
+    await log.info(`Création du jeu de données pour la couche ${layer.nb} - ${layersFieldList[layer.nb].name}`)
 
     let dataset : { id: string, title: string, href: string, page: string }
 
-    if (processingConfig.dataset.editableCreate) {
-      const fields = layersFieldList[idLayer].fields
+    if (processingConfig.dataset!.editableCreate) {
+      const fields = layersFieldList[layer.nb].fields
 
       // Display names and types of the fields for debug
       await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
 
       // Create the dataset, empty
       dataset = (await axios.post('api/v1/datasets', {
-        title: `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`,
+        title: `${layer.title}`,
         description: '',
         isRest: true,
         schema: fields,
@@ -316,15 +310,15 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
       // Dataset population
       idStream += 1
-      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped }
+      const streamInformation = { idStream, tmpFile, layerName: layer.name, featureCount: layer.lines, stop: () => shouldBeStopped }
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id, dataset.title, streamInformation, stopSignal))
     } else {
-      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layer.name, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return
 
       const formData = new FormData()
       formData.append('origin', processingConfig.url)
-      formData.append('title', `${processingConfig.dataset.prefix}-${layersFieldList[idLayer].name}`)
+      formData.append('title', `${layer.title}`)
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
       const getLength = util.promisify(formData.getLength.bind(formData))
       const contentLength = await getLength()
@@ -346,7 +340,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     if (shouldBeStopped) return
 
     const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-    const updateObject = { dataset: datasetObject, idLayer }
+    const updateObject = { dataset: datasetObject, idLayer: layer.nb }
     updateConfig.push(updateObject)
   }
 
@@ -354,7 +348,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
   }
 
-  return updateConfig
+  return { layersList, updateConfig }
 }
 
 /**
