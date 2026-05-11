@@ -435,7 +435,8 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
           // Update the schema
           const updateDataset = await axios.post(`api/v1/datasets/${dataset.id}`, {
-            schema: layersFieldList[idLayer].fields
+            schema: layersFieldList[idLayer].fields,
+            origin: processingConfig.url
           })
           if (shouldBeStopped) return
 
@@ -540,6 +541,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       if (!tmpFileGeoJSON) return
 
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
+      formData.append('origin', processingConfig.url)
       const getLength = util.promisify(formData!.getLength.bind(formData))
       const contentLength = await getLength()
       await log.info(`Chargement de ${formatBytes(contentLength!)}`)
