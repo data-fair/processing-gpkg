@@ -19,23 +19,23 @@ Overall, only the URL in the settings tab remains common, representing a stable 
 
 ### list
 
-For this mode, you only need to enter the URL.
+For this mode, you only need to enter the URL in the Parameters tab.
 
 ### create
 
 | Tab | Field | Description |
 | --- | ----- | ----------- |
 | Datasets | `editableCreate` | By default, file-based datasets are created ; by checking this box, editable datasets can be created |
-| Datasets | `prefix` | This corresponds to the title of the datasets to be created. The datasets are named according to this prefix and the name of the corresponding layer |
-| Parameters | `addAllLayers` | Allows you to build datasets directly for all layers of the file |
-| Parameters | `listIdsLayers` | Identifier of the layers to extract to create datasets |
+| File layers | `addAllLayers` | Allows you to build datasets directly for all layers of the file |
+| File layers - Layers | `add` | Allows you to build a dataset with the corresponding layer by checking the box |
+| File layers - Layers | `title` | This corresponds to the name you want for your dataset. By default, the title will be the layer name. |
 
 ### update
 
 | Tab | Field | Description |
 | --- | ----- | ----------- |
-| Datasets | `editableUpdate` | By default, file-based datasets are updated; checking this box allows you to update editable datasets. However, be careful to select datasets that correspond to the correct mode |
-| Datasets | `datasets` | List of datasets to be updated, taking into account the layer number and the schema update forcing |
+| Datasets | `editableUpdate` | By default, file-based datasets are updated; checking this box allows you to update editable datasets. However, be careful to select datasets that correspond to the correct mode. In case of errors, the update should be blocked. |
+| Datasets | `datasets` | List of datasets to be updated, taking into account the layer and the schema update forcing |
 | Datasets - Datasets to update | `dataset` | Name of the dataset to update, selectable from the list of available datasets |
-| Datasets - Datasets to update | `idLayer` | Layer number used to update the corresponding dataset |
+| Datasets - Datasets to update | `layer` | Name of the layer from which the update should be made, selectable from the list of available layers. |
 | Datasets - Datasets to update | `forceUpdate` | Indicates whether the scheme update should also be forced |
