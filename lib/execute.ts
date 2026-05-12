@@ -316,7 +316,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
       const formData = new FormData()
       formData.append('origin', processingConfig.url)
-      formData.append('title', `${layer.title}`)
+      formData.append('title', layer.title)
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
       const getLength = util.promisify(formData.getLength.bind(formData))
       const contentLength = await getLength()
