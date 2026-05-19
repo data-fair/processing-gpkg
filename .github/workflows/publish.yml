@@ -1,0 +1,72 @@
+name: Publish to Registry
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag' && github.event_name == 'push'
+    environment: production
+    env:
+      REGISTRY_URL: https://koumoul.com/registry
+      # Must match the base image used by the consumer service (processings worker).
+      # Bump this in lockstep with the consumer Dockerfile.
+      ALPINE_NODE_IMAGE: node:24.11.1-alpine3.22
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Build artefact with bundled node_modules
+        run: |
+          set -euo pipefail
+          # 1. Source layer via `npm pack` — respects package.json#files.
+          npm pack
+          TARBALL=$(ls ./*.tgz)
+
+          # 2. Extract to ./build/package/ (npm tarball's top-level prefix).
+          mkdir build
+          tar xzf "$TARBALL" -C build
+
+          # 3. `npm pack` excludes package-lock.json; copy it in for a
+          # reproducible `npm ci`.
+          cp package-lock.json build/package/
+
+          # 4. Install prod deps INSIDE the consumer base image so native
+          # bindings are musl-linked and match what runs in production.
+          docker run --rm \
+            -v "$PWD/build/package:/work" -w /work \
+            "$ALPINE_NODE_IMAGE" \
+            npm ci --omit=dev --omit=optional --no-audit --no-fund
+
+          # 5. Repack, preserving the `package/` prefix the registry expects.
+          tar czf with-deps.tgz -C build package
+
+      - name: Upload to registry
+        env:
+          REGISTRY_API_KEY: ${{ secrets.REGISTRY_API_KEY }}
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          ENCODED_NAME=$(node -p "encodeURIComponent('${PACKAGE_NAME}')")
+          curl -f -X POST \
+            "${REGISTRY_URL}/api/v1/artefacts/${ENCODED_NAME}/versions" \
+            -H "x-api-key: ${REGISTRY_API_KEY}" \
+            -F "architecture=x64" \
+            -F "file=@with-deps.tgz"
