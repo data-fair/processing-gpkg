@@ -10,5 +10,7 @@ export type LayersList = {
   lines: number,
   title?: string,
   titleEditable: string,
-  titleReadOnly: string
+  titleReadOnly: string,
+  SRS: string,
+  haveSRS: boolean
 }

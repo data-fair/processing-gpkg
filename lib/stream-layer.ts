@@ -13,13 +13,15 @@ const BATCH_SIZE = 5000
  * @param tmpFile             Full path of the file to be processed
  * @param layerName           Name of the layer from which the data is extracted
  * @param layerFeatureCount   Number of rows of data to extract
+ * @param layerSRSDefined     Indicates whether the layer has a defined SRS or not
+ * @param layerSRS            User-specified SRS name, if the SRS is not defined
  * @param datasetId           Identifier of the dataset to which the data is sent
  * @param axios               Server for API requests
  * @param log                 Log system that is displayed on the user interface
  * @param isStopped           Function allowing the program to stop if requested
  * @param datasetName         Dataset name, empty by default (use for update)
  */
-export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, datasetId: string, axios : GpkgProcessingContext['axios'], log : GpkgProcessingContext['log'], isStopped: () => boolean, datasetName : string = '') => {
+export const streamLayerToDataset = async (idStream : number, tmpFile: string, layerName: string, layerFeatureCount: number, layerSRSDefined: boolean, layerSRS: string, datasetId: string, axios : GpkgProcessingContext['axios'], log : GpkgProcessingContext['log'], isStopped: () => boolean, datasetName : string = '') => {
   // Table containing the data being sent
   const batch: object[] = []
   let total = 0 // Data sent counter
@@ -46,7 +48,12 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   // Launch a child process to retrieve the data
   // -f GeoJSONSeq : Output format, one JSON feature per line
   // !! We don't use `runCommand` here for optimization reasons! We load and unload the data little by little rather than all at once
-  const proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerName])
+  let proc
+  if (!layerSRSDefined && layerSRS && layerSRS.length > 0) {
+    proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-s_srs', layerSRS, '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerName])
+  } else {
+    proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerName])
+  }
 
   // Creating listeners to stop the child process, retrieve its error outputs, and system errors
   const stderrChunks: Buffer[] = []
@@ -86,7 +93,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
         const feature = JSON.parse(line)
 
         // We only keep the properties, the data recorded by column, and the geometry
-        if (!feature.properties || !feature.geometry) {
+        if (!feature.properties && !feature.geometry) {
           corrupted += 1
           continue
         }
@@ -137,5 +144,6 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
 
   if (corrupted > 0) {
     await log.warning(`${corrupted} lignes sont mal formées, elles ont été ignorées`)
+    await log.progress(progressName, total + corrupted, layerFeatureCount)
   }
 }

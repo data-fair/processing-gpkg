@@ -41,7 +41,7 @@
                   },
                   "after": "**Warning:** if you use a .zip file containing .gpkg files, only the first .gpkg file found will be used.",
                   "x-i18n-after": {
-                    "fr": "**Attention :** si vous utiliser un fichier .zip contenant des fichiers .gpkg, seul le premier .gpkg trouvé sera utilisé.",
+                    "fr": "**Attention :** si vous utilisez un fichier .zip contenant des fichiers .gpkg, seul le premier .gpkg trouvé sera utilisé.",
                     "en": "**Warning:** if you use a .zip file containing .gpkg files, only the first .gpkg file found will be used."
                   }
                 }
@@ -373,6 +373,18 @@
                   "titleReadOnly"
                 ],
                 "cols": 4
+              },
+              {
+                "children": [
+                  "warningSRS"
+                ],
+                "cols": 6
+              },
+              {
+                "children": [
+                  "SRS"
+                ],
+                "cols": 6
               }
             ],
             "properties": {
@@ -408,6 +420,69 @@
                 "readOnly": true,
                 "layout": {
                   "if": "parent.parent.parent.parent.data.datasetMode !== 'create'"
+                }
+              },
+              "haveSRS": {
+                "type": "boolean",
+                "default": true,
+                "title": " ",
+                "readOnly": true
+              },
+              "warningSRS": {
+                "type": "object",
+                "layout": {
+                  "slots": {
+                    "before": "**Warning: The SRS is not defined for this layer!**",
+                    "x-i18n-before": {
+                      "fr": "**Attention : Le SRS n'est pas défini pour cette couche !**",
+                      "en": "**Warning: The SRS is not defined for this layer!**"
+                    }
+                  },                  
+                  "if": "parent.data.haveSRS === false"
+                }
+              },
+              "SRS": {
+                "type": "string",
+                "title": "SRS",
+                "description": "SRS corresponds to the spatial reference system for processing geometries.",
+                "x-i18n-description": {
+                  "fr": "SRS correspond au système de référence spatiale pour le traitement des géométries.",
+                  "en": "SRS corresponds to the spatial reference system for processing geometries."
+                },
+                "examples": [
+                  "EPSG:2154 - Lambert 93",
+                  "EPSG:4326 - WGS 84",
+                  "EPSG:3857 - Web Mercator",
+                  "EPSG:4171 - RGF93",
+                  "EPSG:4559 - RRAF 91 (French Antilles)",
+                  "EPSG:2972 - RGFG95 (French Guiana)",
+                  "EPSG:4471 - RGM04 (Mayotte)",
+                  "EPSG:2975 - RGR92 (Reunion Island)"
+                ],
+                "x-i18n-examples": {
+                  "fr": [
+                    "EPSG:2154 - Lambert 93",
+                    "EPSG:4326 - WGS 84",
+                    "EPSG:3857 - Web Mercator",
+                    "EPSG:4171 - RGF93",
+                    "EPSG:4559 - RRAF 91 (Antilles françaises)",
+                    "EPSG:2972 - RGFG95 (Guyane)",
+                    "EPSG:4471 - RGM04 (Mayotte)",
+                    "EPSG:2975 - RGR92 (La Réunion)"
+                  ],
+                  "en": [
+                    "EPSG:2154 - Lambert 93",
+                    "EPSG:4326 - WGS 84",
+                    "EPSG:3857 - Web Mercator",
+                    "EPSG:4171 - RGF93",
+                    "EPSG:4559 - RRAF 91 (French Antilles)",
+                    "EPSG:2972 - RGFG95 (French Guiana)",
+                    "EPSG:4471 - RGM04 (Mayotte)",
+                    "EPSG:2975 - RGR92 (Reunion Island)"
+                  ]
+                },
+                "layout": {
+                  "if": "parent.data.haveSRS === false"
                 }
               }
             }

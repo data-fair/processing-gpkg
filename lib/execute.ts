@@ -12,6 +12,7 @@ import { fetchHTTP } from './fetch.ts'
 import { createTmpFile } from './tmp-file.ts'
 import { runCommand } from './spawn-process.ts'
 import { addUpdate, displayingProgress, nbUpdate, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
+import { normalizedSRS } from './utils/normalizeSRS.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -29,7 +30,8 @@ export const stop: () => Promise<void> = async () => {
   resolveStop()
 }
 
-type LayersFieldList = Record<number, { name: string, fields: any[], featureCount: number }>
+type GeometrySRS = { haveSRS: boolean, SRS: string }
+type LayersFieldList = Record<number, { name: string, fields: any[], featureCount: number, haveSRS: boolean, geometrySRS?: GeometrySRS }>
 
 /**
  * Input function, allows data processing to begin
@@ -64,7 +66,9 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
         name: layersFieldList[Number(idLayer)].name,
         lines: layersFieldList[Number(idLayer)].featureCount,
         titleEditable: '',
-        titleReadOnly: ''
+        titleReadOnly: '',
+        haveSRS: layersFieldList[Number(idLayer)].haveSRS,
+        SRS: ''
       }))
 
       await patchConfig({ datasetMode: 'create', haveList: true, layers: createConfig, dataset: { editableCreate: false } } as any)
@@ -159,7 +163,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
   await log.step('Récupération de la structure des données')
 
   // Display layers
-  const proc = await runCommand('ogrinfo', ['-json', tmpFile])
+  const proc = await runCommand('ogrinfo', ['-al', '-so', '-json', tmpFile])
   if (shouldBeStopped) return
 
   const result = proc.stdout
@@ -170,11 +174,15 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
   const layersFieldList: LayersFieldList = {}
 
   for (let i = 0; i < layers.length; i++) {
+    // Layers fields
+    let error = false
     for (let j = 0; j < layers[i].fields.length; j++) {
       if (shouldBeStopped) return
 
       if (!layers[i].fields[j].type) {
-        throw new Error(`Pas de type pour ${layers[i].fields[j].name}`)
+        await log.warning(`Pas de type pour l'attribut ${layers[i].fields[j].name} de la couche ${i + 1} - ${layers[i].name}`)
+        error = true
+        break
       }
 
       let typeCorrect = layers[i].fields[j].type.toLowerCase()
@@ -207,20 +215,30 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
       }
     }
 
-    // Adding geometries
-    layers[i].fields.push({
-      title: 'geometry',
-      name: 'geometry',
-      key: 'geometry',
-      type: 'string',
-      'x-refersTo': 'https://purl.org/geojson/vocab#geometry',
-      'x-capabilities': {
-        textAgg: false
-      }
-    })
+    if (!error) {
+      // Adding geometries
+      layers[i].fields.push({
+        title: 'geometry',
+        name: 'geometry',
+        key: 'geometry',
+        type: 'string',
+        'x-refersTo': 'https://purl.org/geojson/vocab#geometry',
+        'x-capabilities': {
+          textAgg: false
+        }
+      })
 
-    await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
-    layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount }
+      // SRS
+      const coordinateSystem = layers[i].geometryFields[0].coordinateSystem.wkt
+      const srsDefined = !coordinateSystem.includes('Undefined SRS')
+
+      await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
+      if (!srsDefined) {
+        await log.warning(`Le SRS (le système de référence spatiale pour le traitement des géométries) n'est pas défini dans le fichier pour la couche ${i + 1} - ${layers[i].name}`)
+      }
+
+      layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount, haveSRS: srsDefined }
+    }
   }
 
   return layersFieldList
@@ -248,6 +266,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     if (layer.add || processingConfig.addAllLayers) {
       layer = {
         ...layer,
+        SRS: normalizedSRS(layer.SRS),
         title: layer.titleEditable ?? (layer.name ?? 'untitled'),
         titleReadOnly: layer.titleEditable ?? (layer.name ?? 'untitled')
       }
@@ -308,10 +327,10 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
       // Dataset population
       idStream += 1
-      const streamInformation = { idStream, tmpFile, layerName: layer.name, featureCount: layer.lines, stop: () => shouldBeStopped }
+      const streamInformation = { idStream, tmpFile, layerName: layer.name, featureCount: layer.lines, layerSRSDefined: layer.haveSRS, layerSRS: layer.SRS, stop: () => shouldBeStopped }
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id, dataset.title, streamInformation, stopSignal))
     } else {
-      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layer.name, log, () => shouldBeStopped)
+      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layer.name, layer.haveSRS, layer.SRS, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return
 
       const formData = new FormData()
@@ -368,6 +387,16 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
   if (!processingConfig.datasets || processingConfig.datasets.length <= 0) {
     await log.warning('Pas de mises à jour renseignées')
     return
+  }
+
+  for (const layer of processingConfig.layers as LayersList[]) {
+    layersFieldList[layer.nb] = {
+      ...layersFieldList[layer.nb],
+      geometrySRS: {
+        haveSRS: layer.haveSRS,
+        SRS: normalizedSRS(layer.SRS)
+      },
+    }
   }
 
   // ---------------------------------
@@ -533,11 +562,20 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     if (processingConfig.editableUpdate) {
       idStream += 1
 
-      const streamInformation = { idStream, tmpFile, layerName: layersFieldList[idLayer].name, featureCount: layersFieldList[idLayer].featureCount, stop: () => shouldBeStopped }
+      const streamInformation = {
+        idStream,
+        tmpFile,
+        layerName: layersFieldList[idLayer].name,
+        featureCount: layersFieldList[idLayer].featureCount,
+        layerSRSDefined: layersFieldList[idLayer].geometrySRS!.haveSRS,
+        layerSRS: layersFieldList[idLayer].geometrySRS!.SRS,
+        stop: () => shouldBeStopped
+      }
 
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id!, dataset.title!, streamInformation, stopSignal))
+      await log.info('')
     } else {
-      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, log, () => shouldBeStopped)
+      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].geometrySRS!.haveSRS, layersFieldList[idLayer].geometrySRS!.SRS, log, () => shouldBeStopped)
       if (!tmpFileGeoJSON) return
 
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
@@ -556,12 +594,12 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
         maxBodyLength: Infinity,
         headers: { ...formData!.getHeaders(), 'content-length': contentLength }
       })
+
+      if (shouldBeStopped) return
+
+      await log.info('Mise à jour complète')
+      await log.info('')
     }
-
-    if (shouldBeStopped) return
-
-    await log.info('Mise à jour complète')
-    await log.info('')
   }
 
   if (streamPendingFinalizations.length > 0) {

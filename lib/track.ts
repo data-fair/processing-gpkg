@@ -87,15 +87,17 @@ export const trackFinalization = (
 /**
  * Allows you to start adding data to the layers in order to process multiple datasets simultaneously.
  *
- * @param axios                 Server for API requests
- * @param datasetId             Id of the dataset whose finalization should be awaited.
- * @param datasetTitle          Human-readable dataset title, used in log messages.
- * @param stream.idStream       Stream ID for displaying progress
- * @param stream.tmpFile        Full path of the file to be processed
- * @param stream.layerName      Name of the layer from which the data is extracted
- * @param stream.featureCount   Number of rows of data to extract
- * @param stream.stop           Function allowing the program to stop if requested
- * @param stopSignal            Program stop signal
+ * @param axios                   Server for API requests
+ * @param datasetId               Id of the dataset whose finalization should be awaited.
+ * @param datasetTitle            Human-readable dataset title, used in log messages.
+ * @param stream.idStream         Stream ID for displaying progress
+ * @param stream.tmpFile          Full path of the file to be processed
+ * @param stream.layerName        Name of the layer from which the data is extracted
+ * @param stream.featureCount     Number of rows of data to extract
+ * @param stream.layerSRSDefined  Indicates whether the layer has a defined SRS or not
+ * @param stream.layerSRS         User-specified SRS name, if the SRS is not defined
+ * @param stream.stop             Function allowing the program to stop if requested
+ * @param stopSignal              Program stop signal
  * @returns A `PendingFinalization` whose `promise` settles once the event arrives,
  *          the run is stopped, the wait times out, or fails — never rejects.
  */
@@ -104,10 +106,10 @@ export const trackAddLayer = (
   log: GpkgProcessingContext['log'],
   datasetId: string,
   datasetTitle: string,
-  stream: { idStream: number, tmpFile: string, layerName: string, featureCount: number, stop: () => boolean },
+  stream: { idStream: number, tmpFile: string, layerName: string, featureCount: number, layerSRSDefined: boolean, layerSRS: string, stop: () => boolean },
   stopSignal : Promise<void>
 ): PendingFinalization => {
-  const journalPromise = streamLayerToDataset(stream.idStream, stream.tmpFile, stream.layerName, stream.featureCount, datasetId, axios, log, stream.stop, datasetTitle)
+  const journalPromise = streamLayerToDataset(stream.idStream, stream.tmpFile, stream.layerName, stream.featureCount, stream.layerSRSDefined, stream.layerSRS, datasetId, axios, log, stream.stop, datasetTitle)
     .then(journal => ({ kind: 'event' as const, journal }))
   const stopPromise = stopSignal.then(() => ({ kind: 'stopped' as const }))
 
