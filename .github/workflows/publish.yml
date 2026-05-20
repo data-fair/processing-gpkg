@@ -64,9 +64,15 @@ jobs:
         run: |
           set -euo pipefail
           PACKAGE_NAME=$(node -p "require('./package.json').name")
-          ENCODED_NAME=$(node -p "encodeURIComponent('${PACKAGE_NAME}')")
+          PACKAGE_MAJOR=$(node -p "require('./package.json').version.split('.')[0]")
+          # Registry artefact id: package name with '/' flattened to '-', plus
+          # the '-<major>' ref. This is the id processings stores verbatim on
+          # processing.plugin and the v6 migration publishes legacy plugins as,
+          # so CI must target the exact same id.
+          ARTEFACT_ID="${PACKAGE_NAME//\//-}-${PACKAGE_MAJOR}"
+          ENCODED_ID=$(node -p "encodeURIComponent('${ARTEFACT_ID}')")
           curl -f -X POST \
-            "${REGISTRY_URL}/api/v1/artefacts/${ENCODED_NAME}/versions" \
+            "${REGISTRY_URL}/api/v1/artefacts/npm/${ENCODED_ID}" \
             -H "x-api-key: ${REGISTRY_API_KEY}" \
             -F "architecture=x64" \
             -F "file=@with-deps.tgz"

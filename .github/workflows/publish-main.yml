@@ -15,11 +15,6 @@ jobs:
       # Must match the base image used by the consumer service (processings worker).
       # Bump this in lockstep with the consumer Dockerfile.
       ALPINE_NODE_IMAGE: node:24.11.1-alpine3.22
-      # The branch artefact's _id on staging — separate from the package name
-      # (`@data-fair/processing-gpkg`) so the production npm artefact and the
-      # rolling main build can coexist. Must match `allowedName` on the
-      # staging upload key.
-      BRANCH_ARTEFACT_SUFFIX: -main
     steps:
       - uses: actions/checkout@v4
 
@@ -58,11 +53,14 @@ jobs:
         run: |
           set -euo pipefail
           PACKAGE_NAME=$(node -p "require('./package.json').name")
-          BRANCH_ARTEFACT_NAME="${PACKAGE_NAME}${BRANCH_ARTEFACT_SUFFIX}"
-          ENCODED_NAME=$(node -p "encodeURIComponent('${BRANCH_ARTEFACT_NAME}')")
+          # Registry artefact id: package name with '/' flattened to '-', plus
+          # the '-<branch>' ref. This is the id processings stores verbatim on
+          # processing.plugin and the v6 migration publishes legacy plugins as,
+          # so CI must target the exact same id.
+          ARTEFACT_ID="${PACKAGE_NAME//\//-}-${GITHUB_REF_NAME}"
+          ENCODED_ID=$(node -p "encodeURIComponent('${ARTEFACT_ID}')")
           curl -f -X POST \
-            "${REGISTRY_URL}/api/v1/artefacts/branch/${ENCODED_NAME}" \
+            "${REGISTRY_URL}/api/v1/artefacts/npm/${ENCODED_ID}" \
             -H "x-api-key: ${REGISTRY_API_KEY}" \
-            -F "branchName=${GITHUB_REF_NAME}" \
             -F "architecture=x64" \
             -F "file=@with-deps.tgz"
