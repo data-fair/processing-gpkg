@@ -23,7 +23,7 @@
     "data-fair-processings-plugin"
   ],
   "author": "Alban Mouton <alban.mouton@gmail.com>",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "bugs": {
     "url": "https://github.com/data-fair/processing-gpkg/issues"
   },
