@@ -59,8 +59,13 @@ jobs:
           # so CI must target the exact same id.
           ARTEFACT_ID="${PACKAGE_NAME//\//-}-${GITHUB_REF_NAME}"
           ENCODED_ID=$(node -p "encodeURIComponent('${ARTEFACT_ID}')")
-          curl -f -X POST \
+          # `category` tags the artefact kind and must match the upload key's
+          # allowedCategory restriction. `--fail-with-body` prints the
+          # registry's response body either way and still fails the step on an
+          # HTTP error, so a rejected upload shows the reason in the log.
+          curl -sS --fail-with-body -X POST \
             "${REGISTRY_URL}/api/v1/artefacts/npm/${ENCODED_ID}" \
             -H "x-api-key: ${REGISTRY_API_KEY}" \
             -F "architecture=x64" \
+            -F "category=processing" \
             -F "file=@with-deps.tgz"
