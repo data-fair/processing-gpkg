@@ -228,9 +228,9 @@
             "if": "parent.data.layers && parent.data.layers.length > 0",
             "children": [
               {
-                "markdown": "*To update the layers, for example in the case of a new file, run the **layers list** mode again.*",
+                "markdown": "*To update the layers, for example in the case of a new file, run the **list the available layers** mode again.*",
                 "x-i18n-markdown": {
-                  "fr": "*Pour remettre à jour les couches, en cas de nouveau fichier par exemple, exécutez de nouveau le mode **liste des couches**.*"
+                  "fr": "*Pour remettre à jour les couches, en cas de nouveau fichier par exemple, exécutez de nouveau le mode **lister les différentes couches**.*"
                 }
               }
             ]
