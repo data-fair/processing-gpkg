@@ -56,9 +56,10 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
     if (processingConfig.datasetMode === 'create') {
       const result = await createDatasets(context, layersFieldList, tmpFile)
 
-      if (result?.updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: result.updateConfig, layers: result.layersList, editableUpdate: processingConfig.dataset!.editableCreate } as any)
+      if (result?.updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: result.updateConfig, layers: result.layersList, editableUpdate: processingConfig.dataset!.editableCreate, url: processingConfig.url.trim() } as any)
     } else if (processingConfig.datasetMode === 'update') {
       await updateDatasets(context, layersFieldList, tmpFile)
+      await patchConfig({ url: processingConfig.url.trim() } as any)
     } else {
       const createConfig: LayersList[] = Object.keys(layersFieldList).map(idLayer => ({
         add: false,
@@ -71,7 +72,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
         SRS: ''
       }))
 
-      await patchConfig({ datasetMode: 'create', haveList: true, layers: createConfig, dataset: { editableCreate: false } } as any)
+      await patchConfig({ datasetMode: 'create', haveList: true, layers: createConfig, dataset: { editableCreate: false }, url: processingConfig.url.trim() } as any)
     }
   } finally {
     // Settle the stop signal so any continuation chained on it (the `stopSignal.then(...)`
@@ -99,7 +100,7 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
   await fs.ensureFile(tmpFile)
   if (shouldBeStopped) return
 
-  const url = new URL(processingConfig.url)
+  const url = new URL(processingConfig.url.trim())
   let filename = decodeURIComponent(path.basename(url.pathname))
   if (shouldBeStopped) return
 
