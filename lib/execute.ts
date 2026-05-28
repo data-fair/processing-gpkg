@@ -145,8 +145,7 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
   } else if (filename.toLowerCase().endsWith('.gpkg')) {
     gpkgFilename = filename
   } else {
-    await log.info('Le format n\'est pas pris en charge')
-    throw new Error('Format non pris en charge')
+    throw new Error('Le format n\'est pas pris en charge')
   }
 
   await log.info(`Traitement du fichier ${gpkgFilename}`)
