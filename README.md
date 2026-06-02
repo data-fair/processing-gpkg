@@ -39,3 +39,13 @@ For this mode, you only need to enter the URL in the Parameters tab.
 | Datasets - Datasets to update | `dataset` | Name of the dataset to update, selectable from the list of available datasets |
 | Datasets - Datasets to update | `layer` | Name of the layer from which the update should be made, selectable from the list of available layers. |
 | Datasets - Datasets to update | `forceUpdate` | Indicates whether the scheme update should also be forced |
+
+## Release
+
+Processing plugins are fetched from the npm registry with a filter on keyword "data-fair-processings-plugin". So publishing a plugin is as simple as publishing the npm package:
+
+```bash
+npm version minor
+npm publish
+git push --follow-tags
+```
