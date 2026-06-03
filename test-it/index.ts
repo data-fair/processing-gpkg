@@ -24,7 +24,7 @@ describe('Geopackage processing', () => {
         datasetMode: 'list',
         url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
       },
-      tmpDir: 'test-data/'
+      tmpDir: 'data/'
     }, config, false)
 
     await gpkgPlugin.run(context)
@@ -67,7 +67,7 @@ describe('Geopackage processing', () => {
         ],
         url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e'
       },
-      tmpDir: 'test-data/'
+      tmpDir: 'data/'
     }, config, false)
 
     await gpkgPlugin.run(context)
@@ -109,7 +109,7 @@ describe('Geopackage processing', () => {
         ]
         url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e'
       },
-      tmpDir: 'test-data/'
+      tmpDir: 'data/'
     }, config, false)
 
     await gpkgPlugin.run(context)
@@ -139,7 +139,7 @@ describe('Geopackage processing', () => {
         url: 'https://www.data.gouv.fr/api/1/datasets/r/26c5be7d-56d2-4d1f-a9ce-b800f0b0f16e',
         listIdsLayers: '1'
       },
-      tmpDir: 'test-data/'
+      tmpDir: 'data/'
     }, config, false)
 
     await gpkgPlugin.run(context)
