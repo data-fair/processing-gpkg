@@ -409,9 +409,15 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       continue
     }
 
-    const targetDataset = (await axios.get(`api/v1/datasets/${update.dataset.id}`)).data
-    if (!targetDataset) {
-      await log.warning('Le jeu de données n\'existe pas. Il a peut-être été supprimé.')
+    let targetDataset
+    try {
+      targetDataset = (await axios.get(`api/v1/datasets/${update.dataset.id}`)).data
+    } catch (err : any) {
+      if (err.response?.status === 404) {
+        await log.warning('Le jeu de données n\'existe pas. Il a peut-être été supprimé.')
+      } else {
+        await log.warning('L\'identification du jeu de données a échoué.')
+      }
       await log.info('')
       continue
     }
