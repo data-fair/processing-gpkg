@@ -74,6 +74,60 @@ describe('Geopackage processing', () => {
     assert.equal(context.processingConfig.datasetMode, 'update')
   })
 
+  it('should run a task with a gpkg file to update an edit dataset', async function () {
+    // WARNING !!!
+    console.warn('Bulk_lines errors may appear (undefined). This is a 413 (Request Entity Too Large) error, which is not acceptable locally.')
+    console.warn('To fix this, you need to change the BATCH_SIZE variable in stream-layer.ts.')
+
+    const context = testUtils.context({
+      pluginConfig: {},
+      processingConfig: {
+        datasetMode: 'update',
+        datasets: [
+          {
+            dataset: {
+              id: 'j-c8px6xu7v0jw-etbui9nd2',
+              href: 'https://staging-koumoul.com/data-fair/api/v1/datasets/j-c8px6xu7v0jw-etbui9nd2',
+              title: 'test-edit-2'
+            },
+            layer: {
+              nb: 2,
+              name: 'commune'
+            },
+            forceUpdate: false
+          },
+          {
+            dataset: {
+              id: 'uvxuveuh-ee34i-02yx624bd',
+              href: 'https://staging-koumoul.com/data-fair/api/v1/datasets/uvxuveuh-ee34i-02yx624bd',
+              title: 'test-edit-2'
+            },
+            layer: {
+              nb: 2,
+              name: 'commune'
+            },
+            forceUpdate: false
+          }
+        ],
+        layers: [
+          {
+            add: true,
+            nb: 2,
+            name: 'commune',
+            lines: 34877,
+            titleReadOnly: 'test-edit-2',
+            titleEditable: 'test-edit-2'
+          }
+        ],
+        url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e'
+      },
+      tmpDir: 'test-data/'
+    }, config, false)
+
+    await gpkgPlugin.run(context)
+    assert.equal(context.processingConfig.datasetMode, 'update')
+  })
+
   // We've kept the file dataset test in the comments, as it's too large for local testing.
   /**
   it('should run a task with a gpkg file to create a file dataset', async function () {

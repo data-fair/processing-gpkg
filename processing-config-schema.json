@@ -93,14 +93,6 @@
               "const": "update",
               "title": "Action"
             },
-            "editableUpdate": {
-              "type": "boolean",
-              "default": false,
-              "title": "Editable datasets",
-              "x-i18n-title": { "fr": "Jeux de données éditables" },
-              "description": "By default, file datasets are updated",
-              "x-i18n-description": { "fr": "Par défaut, on met à jour des jeux de données fichier." }
-            },
             "datasets": {
               "type": "array",
               "title": "Datasets to update",
@@ -157,7 +149,7 @@
                     },
                     "layout": {
                       "getItems": {
-                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&${context.ownerFilter}&${parent.parent.parent.parent.data.editableUpdate === true ? 'rest' : 'file'}=true",
+                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&${context.ownerFilter}",
                         "itemsResults": "data.results",
                         "itemTitle": "item.title",
                         "itemKey": "item.id"

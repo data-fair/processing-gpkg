@@ -56,7 +56,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
     if (processingConfig.datasetMode === 'create') {
       const result = await createDatasets(context, layersFieldList, tmpFile)
 
-      if (result?.updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: result.updateConfig, layers: result.layersList, editableUpdate: processingConfig.dataset!.editableCreate, url: processingConfig.url.trim() } as any)
+      if (result?.updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: result.updateConfig, layers: result.layersList, url: processingConfig.url.trim() } as any)
     } else if (processingConfig.datasetMode === 'update') {
       await updateDatasets(context, layersFieldList, tmpFile)
       await patchConfig({ url: processingConfig.url.trim() } as any)
@@ -399,19 +399,19 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     }
   }
 
-  // ---------------------------------
-  // SECURITY (normally not necessary): we verify that we have the good type of dataset
-  // ---------------------------------
-
-  // We add size=10000 to ensure that all datasets are retrieved (12 by default)
-  const datasets : { id: string }[] = (await axios.get(`api/v1/datasets/?size=10000&${processingConfig.editableUpdate ? 'rest' : 'file'}=true`)).data.results
-  const datasetsIds = new Set<string>(datasets.map(d => d.id))
-
+  // We check whether we need to process a file or editable dataset.
   const datasetsUpdate = []
-  // Checking the availability of the layers and the datasets
+
   for (const update of processingConfig.datasets) {
     if (!update.dataset.id || !update.dataset.title) {
       await log.warning('Le jeu de données est incomplet (id ou titre manquant)')
+      await log.info('')
+      continue
+    }
+
+    const targetDataset = (await axios.get(`api/v1/datasets/${update.dataset.id}`)).data
+    if (!targetDataset) {
+      await log.warning('Le jeu de données n\'existe pas. Il a peut-être été supprimé.')
       await log.info('')
       continue
     }
@@ -423,13 +423,11 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       continue
     }
 
-    // Check if the correct update operation can be performed, to avoid permission errors
-    if (!(datasetsIds.has(update.dataset.id))) {
-      await log.warning(`Le jeu de données ${update.dataset.title} n'est pas de type ${processingConfig.editableUpdate ? 'éditable' : 'fichier'}`)
-      await log.info('')
-      continue
+    const goodUpdate = {
+      ...update,
+      editable: targetDataset.isRest ?? false
     }
-    datasetsUpdate.push(update)
+    datasetsUpdate.push(goodUpdate)
   }
 
   const pendingFinalizations: PendingFinalization[] = []
@@ -444,8 +442,9 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     const dataset = update.dataset
     const idLayer = update.layer.nb!
     const nameLayer = update.layer.name!
+    const editable = update.editable
 
-    if (processingConfig.editableUpdate) {
+    if (editable) {
       // Retrieving the dataset schema
       const datasetSchema : { key: string, type: string }[] = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
       if (shouldBeStopped) return
@@ -530,10 +529,10 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
   }
 
   // Wait for all schema updates to complete before updating data
-  if (processingConfig.editableUpdate && (updatePendingFinalizations.length > 0 || pendingFinalizations.length > 0)) {
+  if (updatePendingFinalizations.length > 0 || pendingFinalizations.length > 0) {
     displayingProgress()
     await log.task(updateProgressName)
-    await log.progress(updateProgressName, nbUpdate, processingConfig.datasets!.length)
+    await log.progress(updateProgressName, nbUpdate, updatePendingFinalizations.length)
 
     await Promise.allSettled(updatePendingFinalizations.map(p => p.promise))
     await Promise.allSettled(pendingFinalizations.map(p => p.promise))
@@ -554,12 +553,13 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     const idLayer = update.layer.nb!
     const nameLayer = update.layer.name!
     const formData = new FormData()
+    const editable = update.editable
 
     await log.info('')
     await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer} - ${nameLayer}`)
 
     // Data update
-    if (processingConfig.editableUpdate) {
+    if (editable) {
       idStream += 1
 
       const streamInformation = {
