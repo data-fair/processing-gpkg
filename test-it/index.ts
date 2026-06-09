@@ -74,6 +74,7 @@ describe('Geopackage processing', () => {
     assert.equal(context.processingConfig.datasetMode, 'update')
   })
 
+  /**
   it('should run a task with a gpkg file to update an edit dataset', async function () {
     // WARNING !!!
     console.warn('Bulk_lines errors may appear (undefined). This is a 413 (Request Entity Too Large) error, which is not acceptable locally.')
@@ -127,7 +128,7 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
   })
-
+ */
   // We've kept the file dataset test in the comments, as it's too large for local testing.
   /**
   it('should run a task with a gpkg file to create a file dataset', async function () {
