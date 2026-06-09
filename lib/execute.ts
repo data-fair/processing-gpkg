@@ -256,7 +256,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
  * @param tmpFile           Full path of the file to be processed
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async ({ processingConfig: rawConfig, processingId, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
+const createDatasets = async ({ processingConfig: rawConfig, processingId, axios, tmpDir, log } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
   const processingConfig = rawConfig as CreateDatasets & Parameters
   await log.step('Construction des jeux de données')
 
@@ -365,7 +365,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
   }
 
-  return { layersList, updateConfig }
+  return { layersList: processingConfig.layers, updateConfig }
 }
 
 /**
