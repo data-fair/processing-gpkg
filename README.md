@@ -34,11 +34,12 @@ For this mode, you only need to enter the URL in the Parameters tab.
 
 | Tab | Field | Description |
 | --- | ----- | ----------- |
-| Datasets | `editableUpdate` | By default, file-based datasets are updated; checking this box allows you to update editable datasets. However, be careful to select datasets that correspond to the correct mode. In case of errors, the update should be blocked. |
 | Datasets | `datasets` | List of datasets to be updated, taking into account the layer and the schema update forcing |
 | Datasets - Datasets to update | `dataset` | Name of the dataset to update, selectable from the list of available datasets |
 | Datasets - Datasets to update | `layer` | Name of the layer from which the update should be made, selectable from the list of available layers. |
 | Datasets - Datasets to update | `forceUpdate` | Indicates whether the scheme update should also be forced |
+
+*Note: the detection of the type of dataset (file or editable) during the update is done automatically, so it is possible to update datasets of both types at the same time.*
 
 ## Release
 
