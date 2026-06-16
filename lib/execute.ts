@@ -270,16 +270,9 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
         title: layer.titleEditable ?? (layer.name ?? 'untitled'),
         titleReadOnly: layer.titleEditable ?? (layer.name ?? 'untitled')
       }
-      layersList.push(layer)
     }
+    layersList.push(layer)
   }
-
-  // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
-  if (layersList.length <= 0) {
-    await log.warning('Pas de couches renseignées')
-    return
-  }
-
   const layersListCreate: LayersList[] = []
   const updateConfig = []
   let idStream = 0
@@ -287,13 +280,21 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
   // SECURITY (normally not necessary) : Checking the availability of the layers (in the event that the download URL has been changed accidentally)
   for (const layer of layersList) {
-    const idLayer = layer.nb
-    const nameLayer = layer.name
-    if (!(idLayer in layersFieldList && layersFieldList[idLayer].name === nameLayer)) {
-      await log.warning(`La couche ${idLayer} - ${nameLayer} n'est pas présente dans les couches disponibles`)
-    } else {
-      layersListCreate.push(layer)
+    if (layer.add) {
+      const idLayer = layer.nb
+      const nameLayer = layer.name
+      if (!(idLayer in layersFieldList && layersFieldList[idLayer].name === nameLayer)) {
+        await log.warning(`La couche ${idLayer} - ${nameLayer} n'est pas présente dans les couches disponibles`)
+      } else {
+        layersListCreate.push(layer)
+      }
     }
+  }
+
+  // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
+  if (layersListCreate.length <= 0) {
+    await log.warning('Pas de couches renseignées')
+    return
   }
 
   await log.info(`Extraction des couches ${layersListCreate.map(layer => (`${layer.nb} - ${layer.name}`)).join(', ')}`)
