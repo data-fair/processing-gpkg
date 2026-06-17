@@ -273,6 +273,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     }
     layersList.push(layer)
   }
+
   const layersListCreate: LayersList[] = []
   const updateConfig = []
   let idStream = 0
@@ -366,7 +367,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
   }
 
-  return { layersList: processingConfig.layers, updateConfig }
+  return { layersList, updateConfig }
 }
 
 /**
