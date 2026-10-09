@@ -19,7 +19,6 @@ describe('Geopackage processing', () => {
 
   it('should display the layers of a gpkg file', async () => {
     const context = testUtils.context({
-      pluginConfig: {},
       processingConfig: {
         datasetMode: 'list',
         url: 'https://www.data.gouv.fr/api/1/datasets/r/0abf0b26-317f-4055-a0e3-8f4ea772853e',
@@ -36,7 +35,6 @@ describe('Geopackage processing', () => {
     console.warn('To fix this, you need to change the BATCH_SIZE variable in stream-layer.ts.')
 
     const context = testUtils.context({
-      pluginConfig: {},
       processingConfig: {
         datasetMode: 'create',
         dataset: {
@@ -81,7 +79,6 @@ describe('Geopackage processing', () => {
     console.warn('To fix this, you need to change the BATCH_SIZE variable in stream-layer.ts.')
 
     const context = testUtils.context({
-      pluginConfig: {},
       processingConfig: {
         datasetMode: 'update',
         datasets: [
@@ -133,7 +130,6 @@ describe('Geopackage processing', () => {
   /**
   it('should run a task with a gpkg file to create a file dataset', async function () {
     const context = testUtils.context({
-      pluginConfig: {},
       processingConfig: {
         datasetMode: 'create',
         dataset: {
@@ -176,7 +172,6 @@ describe('Geopackage processing', () => {
   /**
   it('should run a task with a zip file', async function () {
     const context = testUtils.context({
-      pluginConfig: {},
       processingConfig: {
         datasetMode: 'create',
         dataset: {
