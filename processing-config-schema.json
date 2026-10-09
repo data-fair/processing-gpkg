@@ -6,8 +6,8 @@
   ],
   "allOf": [
     {
-      "title": "Dataset mode",
-      "x-i18n-title": { "fr": "Liste de jeux de données", "en": "Datasets" },
+      "title": "Datasets",
+      "x-i18n-title": { "fr": "Jeux de données" },
       "default": {
         "datasetMode": "list"
       },
@@ -20,7 +20,7 @@
       },
       "oneOf": [
         {
-          "title": "List layers",
+          "title": "Layers list",
           "x-i18n-title": { "fr": "Lister les différentes couches", "en": "List the available layers" },
           "properties": {
             "datasetMode": {
