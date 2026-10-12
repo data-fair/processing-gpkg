@@ -50,6 +50,8 @@ describe('Geopackage processing', () => {
   const createdIds: string[] = []
 
   before(async () => {
+    // the worker gives each run a fresh tmpDir, files left by a previous test run make unzip prompt
+    fs.rmSync('data', { recursive: true, force: true })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   })
