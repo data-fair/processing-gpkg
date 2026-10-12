@@ -1,5 +1,7 @@
 import { spawn } from 'child_process'
 
+import { getOgrEnv, layerArg } from './spawn-process.ts'
+
 import type { GpkgProcessingContext } from './context.ts'
 
 /**
@@ -59,9 +61,9 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   // !! We don't use `runCommand` here for optimization reasons! We load and unload the data little by little rather than all at once
   let proc
   if (!layerSRSDefined && layerSRS && layerSRS.length > 0) {
-    proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-s_srs', layerSRS, '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerName])
+    proc = spawn('ogr2ogr', ['-if', 'GPKG', '-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-s_srs', layerSRS, '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerArg(layerName)], { env: getOgrEnv() })
   } else {
-    proc = spawn('ogr2ogr', ['-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerName])
+    proc = spawn('ogr2ogr', ['-if', 'GPKG', '-f', 'GeoJSONSeq', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', '/vsistdout/', tmpFile, layerArg(layerName)], { env: getOgrEnv() })
   }
 
   // Creating listeners to stop the child process, retrieve its error outputs, and system errors

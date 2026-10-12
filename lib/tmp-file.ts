@@ -1,8 +1,24 @@
 import fs from 'fs-extra'
 import path from 'path'
 
-import { runCommand } from './spawn-process.ts'
+import { runCommand, getOgrEnv, layerArg } from './spawn-process.ts'
 import type { GpkgProcessingContext } from './context.ts'
+
+/**
+ * Name of a local file built from a name read in the downloaded file (sheet or layer name):
+ * no directory part, so that it stays in the tmp directory
+ */
+export const safeLocalName = (name: string) => name.replace(/[/\\]/g, '_')
+
+/**
+ * unzip restores the symbolic links of an archive: reading or writing one of
+ * them would reach a file of the worker outside of the tmp directory.
+ */
+export const removeSymlinks = async (dir: string): Promise<void> => {
+  for (const f of await fs.readdir(dir)) {
+    if ((await fs.lstat(path.join(dir, f))).isSymbolicLink()) await fs.remove(path.join(dir, f))
+  }
+}
 
 /**
  * Allows you to create a temporary .geojson file from a layer in the data file, to be sent to create a file dataset.
@@ -16,7 +32,7 @@ import type { GpkgProcessingContext } from './context.ts'
  * @returns   Name of the temporary file created to send
  */
 export const createTmpFile = async (dir : string, tmpFile : string, layerName : string, layerSRSDefined: boolean, layerSRS: string, log: GpkgProcessingContext['log'], isStopped: () => boolean) => {
-  const tmpFileGeoJSON = path.join(dir, `${layerName}.geojson`)
+  const tmpFileGeoJSON = path.join(dir, `${safeLocalName(layerName)}.geojson`)
 
   try {
     // If there are two updates with the same layer, it is only downloaded once.
@@ -25,9 +41,9 @@ export const createTmpFile = async (dir : string, tmpFile : string, layerName : 
       if (isStopped()) return
 
       if (!layerSRSDefined && layerSRS && layerSRS.length > 0) {
-        await runCommand('ogr2ogr', ['-f', 'GeoJSON', '-lco', 'RFC7946=YES', '-s_srs', layerSRS, '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', tmpFileGeoJSON, tmpFile, layerName])
+        await runCommand('ogr2ogr', ['-if', 'GPKG', '-f', 'GeoJSON', '-lco', 'RFC7946=YES', '-s_srs', layerSRS, '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', tmpFileGeoJSON, tmpFile, layerArg(layerName)], { env: getOgrEnv() })
       } else {
-        await runCommand('ogr2ogr', ['-f', 'GeoJSON', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', tmpFileGeoJSON, tmpFile, layerName])
+        await runCommand('ogr2ogr', ['-if', 'GPKG', '-f', 'GeoJSON', '-lco', 'RFC7946=YES', '-t_srs', 'EPSG:4326', '-lco', 'COORDINATE_PRECISION=6', tmpFileGeoJSON, tmpFile, layerArg(layerName)], { env: getOgrEnv() })
       }
     }
   } catch (err : any) {

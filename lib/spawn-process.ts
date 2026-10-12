@@ -3,6 +3,28 @@ import Debug from 'debug'
 
 const debug = Debug('spawn-process')
 
+// Run GDAL in a controlled environment, without the secrets and settings of the worker
+const ogrEnvKeys = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'LD_LIBRARY_PATH']
+const ogrEnvPrefixes = ['GDAL_', 'CPL_', 'OGR_', 'PROJ_']
+
+export const getOgrEnv = (env: NodeJS.ProcessEnv = process.env): Record<string, string> => {
+  const ogrEnv: Record<string, string> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) continue
+    if (ogrEnvKeys.includes(key) || ogrEnvPrefixes.some(prefix => key.startsWith(prefix))) ogrEnv[key] = value
+  }
+  return ogrEnv
+}
+
+/**
+ * A layer name is read in the downloaded file and given as an argument to ogr2ogr:
+ * it must not be interpreted as an option
+ */
+export const layerArg = (layerName: string): string => {
+  if (layerName.startsWith('-')) throw new Error(`nom de couche non supporté "${layerName}"`)
+  return layerName
+}
+
 /**
  * Defining an interface for the return values from the execution of a command
  * @param stdout  Console output

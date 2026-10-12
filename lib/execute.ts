@@ -9,8 +9,8 @@ import FormData from 'form-data'
 
 import type { LayersList, GpkgProcessingContext } from './context.ts'
 import { fetchHTTP } from './fetch.ts'
-import { createTmpFile } from './tmp-file.ts'
-import { runCommand } from './spawn-process.ts'
+import { createTmpFile, removeSymlinks } from './tmp-file.ts'
+import { runCommand, getOgrEnv } from './spawn-process.ts'
 import { addUpdate, displayingProgress, nbUpdate, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
 import { normalizedSRS } from './utils/normalizeSRS.ts'
 
@@ -122,6 +122,7 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
 
     // Unzip
     await runCommand('unzip', ['-j', tmpFile, '-d', `${tmpFile}-dezip`])
+    await removeSymlinks(`${tmpFile}-dezip`)
 
     // We are looking for the .gpkg files contained in the .zip file.
     const filesGpkg: string[] = []
@@ -163,7 +164,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
   await log.step('Récupération de la structure des données')
 
   // Display layers
-  const proc = await runCommand('ogrinfo', ['-al', '-so', '-json', tmpFile])
+  const proc = await runCommand('ogrinfo', ['-if', 'GPKG', '-al', '-so', '-json', tmpFile], { env: getOgrEnv() })
   if (shouldBeStopped) return
 
   const result = proc.stdout
