@@ -14,7 +14,7 @@ import type { GpkgProcessingContext } from './context.ts'
  * @returns Name of extracted file
  */
 export const fetchHTTP = async (processingConfig: GpkgProcessingContext['processingConfig'], tmpFile: string, axios: GpkgProcessingContext['axios']) => {
-  const opts: AxiosRequestConfig = { responseType: 'stream', maxRedirects: 4 }
+  const opts: AxiosRequestConfig = { responseType: 'stream', maxRedirects: 4, timeout: 60000 }
 
   // File retrieval and download
   let res

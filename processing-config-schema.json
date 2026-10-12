@@ -149,7 +149,7 @@
                     },
                     "layout": {
                       "getItems": {
-                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&${context.ownerFilter}",
+                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&size=50&${context.ownerFilter}",
                         "itemsResults": "data.results",
                         "itemTitle": "item.title",
                         "itemKey": "item.id"
@@ -298,7 +298,8 @@
             },
             "lines": {
               "type": "string",
-              "title": "Nombre de lignes",
+              "title": "Number of lines",
+              "x-i18n-title": { "fr": "Nombre de lignes" },
               "readOnly": true
             },
             "titleEditable": {
