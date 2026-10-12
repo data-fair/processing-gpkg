@@ -447,6 +447,8 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
   const updatePendingFinalizations: PendingFinalization[] = []
   const updateProgressName = 'En attente de la finalisation de la mise à jour des schémas'
   const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, layer: { nb?: number, name?: string }, formData?: FormData }[] = []
+  // datasets whose drop / schema update failed: sending lines to them would only mix old and new data
+  const failedDatasets = new Set<string>()
 
   for (const update of datasetsUpdate) {
     // Schema verification
@@ -547,8 +549,12 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     await log.task(updateProgressName)
     await log.progress(updateProgressName, nbUpdate, updatePendingFinalizations.length)
 
-    await Promise.allSettled(updatePendingFinalizations.map(p => p.promise))
-    await Promise.allSettled(pendingFinalizations.map(p => p.promise))
+    // pendingFinalizations is filled while updatePendingFinalizations settle, so they are read in this order
+    for (const list of [updatePendingFinalizations, pendingFinalizations]) {
+      for (const p of list) {
+        if (!(await p.promise).ok) failedDatasets.add(p.datasetId)
+      }
+    }
     displayingProgress(false)
 
     await log.info('')
@@ -571,6 +577,10 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     const layerSRS = layersFieldList[idLayer].geometrySRS?.SRS ?? ''
 
     await log.info('')
+    if (failedDatasets.has(dataset.id!)) {
+      await log.warning(`Le jeu ${dataset.title} n'est pas mis à jour car la suppression de ses anciennes données a échoué`)
+      continue
+    }
     await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer} - ${nameLayer}`)
 
     // Data update
