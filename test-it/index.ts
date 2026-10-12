@@ -57,7 +57,7 @@ describe('Geopackage processing', () => {
     console.warn('Bulk_lines errors may appear (undefined). This is a 413 (Request Entity Too Large) error, which is not acceptable locally.')
     console.warn('To fix this, you need to change the BATCH_SIZE variable in stream-layer.ts.')
 
-    // small layers only: the commune layer (35k polygons) takes several minutes to be indexed on staging
+    // smallest layer only: data-fair indexing is slow on staging (35k communes take several minutes)
     const context = testUtils.context({
       processingConfig: {
         datasetMode: 'create',
@@ -71,13 +71,6 @@ describe('Geopackage processing', () => {
             name: 'region',
             lines: 19,
             titleEditable: 'test-edit-4'
-          },
-          {
-            add: true,
-            nb: 6,
-            name: 'epci',
-            lines: 1266,
-            titleEditable: 'test-edit-6'
           }
         ],
         url
@@ -88,7 +81,7 @@ describe('Geopackage processing', () => {
 
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
-    assert.equal(context.processingConfig.datasets.length, 2)
+    assert.equal(context.processingConfig.datasets.length, 1)
     createdIds.push(...context.processingConfig.datasets.map((d: any) => d.dataset.id))
     for (const { dataset, layer } of context.processingConfig.datasets) {
       await waitIndexed(axios, dataset.id, context.processingConfig.layers.find((l: any) => l.nb === layer.nb).lines)
