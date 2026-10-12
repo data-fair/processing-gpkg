@@ -6,7 +6,7 @@ A plugin that allows the creation and management of datasets from geopackage fil
 
 - **List layers** — Lists the layers and corresponding information in your file
 - **Dataset management** — Create or update a REST or file dataset from the desired layers, configurable from the processing parameters.
-- **Graceful stop** — honours the stop signal from the platform and exits cleanly mid-run; optionally, the stop can be ignored to test forced termination after timeout.
+- **Graceful stop** — honours the stop signal from the platform and exits cleanly mid-run.
 
 ## Configuration
 

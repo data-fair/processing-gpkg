@@ -39,7 +39,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
     try {
       await axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend)
     } catch (err: any) {
-      await log.error(`Erreur bulk_lines : ${JSON.stringify(err.response?.data)}`)
+      await log.error(`Erreur bulk_lines : ${JSON.stringify(err.data ?? err.response?.data)}`)
       throw err
     }
     await log.progress(progressName, total, layerFeatureCount)
@@ -61,12 +61,14 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
     stderrChunks.push(d)
   })
 
-  const procClosed = new Promise<number>((resolve) => {
+  const procClosed = new Promise<number>((resolve, reject) => {
     proc.on('close', (code) => {
       resolve(code ?? 0)
     })
+    // throwing inside the listener would crash the whole worker
+    proc.on('error', reject)
   })
-  proc.on('error', (err) => { throw err })
+  procClosed.catch(() => {}) // the rejection is awaited later, avoid an unhandled rejection meanwhile
 
   // Data reading loop
   let textBuffer = ''

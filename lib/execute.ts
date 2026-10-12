@@ -215,7 +215,9 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
       }
     }
 
-    if (!error) {
+    if (!error && !layers[i].geometryFields?.length) {
+      await log.warning(`La couche ${i + 1} - ${layers[i].name} n'a pas de géométrie, elle est ignorée`)
+    } else if (!error) {
       // Adding geometries
       layers[i].fields.push({
         title: 'geometry',
@@ -266,9 +268,10 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     if (layer.add || processingConfig.addAllLayers) {
       layer = {
         ...layer,
+        add: true,
         SRS: normalizedSRS(layer.SRS),
-        title: layer.titleEditable ?? (layer.name ?? 'untitled'),
-        titleReadOnly: layer.titleEditable ?? (layer.name ?? 'untitled')
+        title: layer.titleEditable || layer.name || 'untitled',
+        titleReadOnly: layer.titleEditable || layer.name || 'untitled'
       }
     }
     layersList.push(layer)
@@ -333,7 +336,8 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id, dataset.title, streamInformation, stopSignal))
     } else {
       const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layer.name, layer.haveSRS, layer.SRS, log, () => shouldBeStopped)
-      if (!tmpFileGeoJSON) return
+      if (shouldBeStopped) return
+      if (!tmpFileGeoJSON) continue
 
       const formData = new FormData()
       formData.append('origin', processingConfig.url)
@@ -391,7 +395,8 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     return
   }
 
-  for (const layer of processingConfig.layers as LayersList[]) {
+  for (const layer of (processingConfig.layers ?? []) as LayersList[]) {
+    if (!(layer.nb in layersFieldList)) continue
     layersFieldList[layer.nb] = {
       ...layersFieldList[layer.nb],
       geometrySRS: {
@@ -415,7 +420,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     try {
       targetDataset = (await axios.get(`api/v1/datasets/${update.dataset.id}`)).data
     } catch (err : any) {
-      if (err.response?.status === 404) {
+      if ((err.status ?? err.response?.status) === 404) {
         await log.warning('Le jeu de données n\'existe pas. Il a peut-être été supprimé.')
       } else {
         await log.warning('L\'identification du jeu de données a échoué.')
@@ -562,6 +567,8 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     const nameLayer = update.layer.name!
     const formData = new FormData()
     const editable = update.editable
+    const layerSRSDefined = layersFieldList[idLayer].geometrySRS?.haveSRS ?? layersFieldList[idLayer].haveSRS
+    const layerSRS = layersFieldList[idLayer].geometrySRS?.SRS ?? ''
 
     await log.info('')
     await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer} - ${nameLayer}`)
@@ -575,16 +582,17 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
         tmpFile,
         layerName: layersFieldList[idLayer].name,
         featureCount: layersFieldList[idLayer].featureCount,
-        layerSRSDefined: layersFieldList[idLayer].geometrySRS!.haveSRS,
-        layerSRS: layersFieldList[idLayer].geometrySRS!.SRS,
+        layerSRSDefined,
+        layerSRS,
         stop: () => shouldBeStopped
       }
 
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id!, dataset.title!, streamInformation, stopSignal))
       await log.info('')
     } else {
-      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, layersFieldList[idLayer].geometrySRS!.haveSRS, layersFieldList[idLayer].geometrySRS!.SRS, log, () => shouldBeStopped)
-      if (!tmpFileGeoJSON) return
+      const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layersFieldList[idLayer].name, layerSRSDefined, layerSRS, log, () => shouldBeStopped)
+      if (shouldBeStopped) return
+      if (!tmpFileGeoJSON) continue
 
       formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
       formData.append('origin', processingConfig.url)
