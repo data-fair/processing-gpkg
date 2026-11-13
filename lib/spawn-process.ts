@@ -21,7 +21,7 @@ export const getOgrEnv = (env: NodeJS.ProcessEnv = process.env): Record<string, 
  * it must not be interpreted as an option
  */
 export const layerArg = (layerName: string): string => {
-  if (layerName.startsWith('-')) throw new Error(`nom de couche non supporté "${layerName}"`)
+  if (layerName.startsWith('-')) throw new Error(`Unsupported layer name "${layerName}": it cannot start with "-"`)
   return layerName
 }
 
@@ -61,7 +61,7 @@ export async function runCommand (cmd: string, args: string[], options: SpawnOpt
       debug('stdout', stdout)
       debug('stderr', stderr)
       if (code === 0) resolve({ stdout, stderr })
-      else reject(new Error(stderr || `${cmd} en échec avec le code ${code}`))
+      else reject(new Error(stderr || `${cmd} failed with exit code ${code}`))
     })
   })
 }

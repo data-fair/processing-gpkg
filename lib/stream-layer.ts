@@ -30,7 +30,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   let total = 0 // Data sent counter
   let corrupted = 0
 
-  const progressName = `${idStream}. Envoi des données ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}`
+  const progressName = `${idStream}. Sending lines ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}`
   await log.task(progressName)
   await log.progress(progressName, 0, layerFeatureCount)
 
@@ -42,7 +42,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
     try {
       await dfRetry(() => axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend), log, { label: `POST api/v1/datasets/${datasetId}/_bulk_lines`, creates: true })
     } catch (err: any) {
-      await log.error(`Erreur bulk_lines : ${JSON.stringify(errorData(err))}`)
+      await log.error(`Sending lines to the dataset ${datasetId} failed`, errorData(err))
       throw err
     }
     await log.progress(progressName, total, layerFeatureCount)
@@ -115,7 +115,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
         }
       } catch {
         // If the JSON is invalid, no error is triggered; the process moves to the next line.
-        await log.debug(`${idStream} ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}. Lignes malformées ignorées (Ligne ${lineCount})`)
+        await log.debug(`${idStream} ${datasetName.length > 0 ? `- ${datasetName} ` : ''}- ${layerName}. Malformed line ${lineCount} skipped`)
       }
     }
   }
@@ -132,7 +132,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
         })
       }
     } catch {
-      await log.debug('Buffer résiduel non parseable, ignoré')
+      await log.debug('Unparseable trailing content of the ogr2ogr output skipped')
     }
   }
 
@@ -144,11 +144,11 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   const exitCode = await procClosed
   if (exitCode !== 0) {
     const stderr = Buffer.concat(stderrChunks).toString()
-    throw new Error(`ogr2ogr en échec avec le code ${exitCode}: ${stderr}`)
+    throw new Error(`ogr2ogr failed with exit code ${exitCode}: ${stderr}`)
   }
 
   if (corrupted > 0) {
-    await log.warning(`${corrupted} lignes sont mal formées, elles ont été ignorées`)
+    await log.warning(`${corrupted} malformed lines were skipped`)
     await log.progress(progressName, total + corrupted, layerFeatureCount)
   }
 }

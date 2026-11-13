@@ -69,14 +69,14 @@ export const trackFinalization = (
       }
       const journal: any = result.journal
       if (opts.checkDraft && (journal.draft !== undefined || journal.draft)) {
-        await log.warning(`Le schéma du jeu de données "${datasetTitle}" n'est pas compatible avec la couche . Le jeu est passé en mode brouillon, à vous de le valider ou non.`)
+        await log.warning(`The schema of the dataset "${datasetTitle}" does not match the layer: the new file is kept as a draft, validate or cancel it from the dataset page.`)
       } else {
-        await log.info(`Le jeu de données "${datasetTitle}" ${opts.successMessage}`)
+        await log.info(`The dataset "${datasetTitle}" ${opts.successMessage}`)
       }
       return { ok: true as const, journal }
     })
     .catch(async (error: Error) => {
-      await log.warning(`Le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
+      await log.warning(`The dataset "${datasetTitle}" could not be finalized (${error.message}), you can run the processing again.`)
       return { ok: false as const, error }
     })
     .finally(async () => {
@@ -129,7 +129,7 @@ export const trackAddLayer = (
       return { ok: true as const, journal }
     })
     .catch(async (error: Error) => {
-      await log.warning(`L'envoi de données vers le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
+      await log.warning(`Sending lines to the dataset "${datasetTitle}" failed (${error.message}), you can run the processing again.`)
       return { ok: false as const, error }
     })
   return { promise, datasetId, datasetTitle }
@@ -166,7 +166,7 @@ export const trackUpdateSchema = (
       return { ok: true as const, journal }
     })
     .catch(async (error: Error) => {
-      await log.warning(`La mise à jour du schéma pour le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
+      await log.warning(`Updating the schema of the dataset "${datasetTitle}" failed (${error.message}), you can run the processing again.`)
       return { ok: false as const, error }
     })
   return { promise, datasetId, datasetTitle }
@@ -208,11 +208,11 @@ export const addUpdate = (
         return { ok: false as const, error: new Error('stopped') }
       }
       const journal: any = result.journal
-      await log.info(`Le jeu de données "${datasetTitle}" a été finalisé`)
+      await log.info(`The dataset "${datasetTitle}" is finalized`)
       return { ok: true as const, journal }
     })
     .catch(async (error: Error) => {
-      await log.warning(`La mise à jour du schéma pour le jeu de données "${datasetTitle}" n'a pas pu être finalisé (${error.message}), vous pouvez relancer son traitement.`)
+      await log.warning(`Updating the schema of the dataset "${datasetTitle}" failed (${error.message}), you can run the processing again.`)
       return { ok: false as const, error }
     })
   return { promise, datasetId, datasetTitle }

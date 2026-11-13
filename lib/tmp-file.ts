@@ -37,7 +37,7 @@ export const createTmpFile = async (dir : string, tmpFile : string, layerName : 
   try {
     // If there are two updates with the same layer, it is only downloaded once.
     if (!(await fs.pathExists(tmpFileGeoJSON))) {
-      await log.info('Création du fichier temporaire')
+      await log.info('Converting the layer to a temporary GeoJSON file')
       if (isStopped()) return
 
       if (!layerSRSDefined && layerSRS && layerSRS.length > 0) {
@@ -47,7 +47,7 @@ export const createTmpFile = async (dir : string, tmpFile : string, layerName : 
       }
     }
   } catch (err : any) {
-    await log.warning(`ogr2ogr en échec : ${err.message}`)
+    await log.warning(`Conversion of the layer "${layerName}" failed, it is skipped: ${err.message}`)
     return undefined
   }
 

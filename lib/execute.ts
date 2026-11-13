@@ -42,7 +42,7 @@ const sendFile = async (axios: GpkgProcessingContext['axios'], log: GpkgProcessi
     formData.append('file', fs.createReadStream(filePath), { filename: path.basename(filePath) })
     const getLength = util.promisify(formData.getLength.bind(formData))
     const contentLength = await getLength()
-    await log.info(`Chargement de ${formatBytes(contentLength!)}`)
+    await log.info(`Uploading ${formatBytes(contentLength!, 'en')}`)
     return await axios({
       method: 'post',
       url,
@@ -102,7 +102,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   } finally {
     // nothing is uploaded after a stop, but an editable dataset that was being filled keeps
     // the lines already sent: a new run refills it
-    if (shouldBeStopped) await context.log.warning('Traitement interrompu, les jeux de données éditables en cours de remplissage peuvent être incomplets : relancez le traitement pour les remplir.')
+    if (shouldBeStopped) await context.log.warning('Processing interrupted. Nothing more was uploaded, but an editable dataset that was being filled may be incomplete: run the processing again to refill it.')
     // Settle the stop signal so any continuation chained on it (the `stopSignal.then(...)`
     // branches inside `trackFinalization`) is released. At this point all the relevant
     // `Promise.race` calls have already resolved via the journal branch, so this late
@@ -123,7 +123,7 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
 const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessingContext) => {
   await fs.ensureDir(tmpDir)
 
-  await log.step('Téléchargement du fichier')
+  await log.step('Downloading the file')
   let tmpFile = path.join(tmpDir, 'file')
   await fs.ensureFile(tmpFile)
   if (shouldBeStopped) return
@@ -139,14 +139,14 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
   const fd = await fs.open(tmpFile, 'r')
   await fs.fsync(fd)
   await fs.close(fd)
-  await log.info(`Le fichier a été téléchargé (${filename})`)
+  await log.info(`File downloaded (${filename})`)
   if (shouldBeStopped) return
 
   let gpkgFilename
 
   // Check the file format
   if (filename.toLowerCase().endsWith('.zip')) {
-    await log.info(`Dézippage du fichier ${filename}`)
+    await log.info(`Unzipping ${filename}`)
 
     // Unzip
     await runCommand('unzip', ['-o', '-j', tmpFile, '-d', `${tmpFile}-dezip`])
@@ -165,7 +165,7 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
     if (shouldBeStopped) return
 
     if (nbFiles <= 0) {
-      throw new Error('Il n\'y a pas de fichiers .gpkg à traiter dans ce zip.')
+      throw new Error('The zip archive contains no .gpkg file.')
     } else {
       // We keep the first .gpkg file we find, we ignore the others
       gpkgFilename = path.basename(filesGpkg[0])
@@ -174,10 +174,10 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
   } else if (filename.toLowerCase().endsWith('.gpkg')) {
     gpkgFilename = filename
   } else {
-    throw new Error('Le format n\'est pas pris en charge')
+    throw new Error(`Unsupported file format (${filename}): only .gpkg files and .zip archives containing one are accepted.`)
   }
 
-  await log.info(`Traitement du fichier ${gpkgFilename}`)
+  await log.info(`Processing ${gpkgFilename}`)
 
   return tmpFile
 }
@@ -189,7 +189,7 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
  * @returns Dictionary of available layer structures (id: {name, fields, featureCount})
  */
 const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
-  await log.step('Récupération de la structure des données')
+  await log.step('Reading the structure of the layers')
 
   // Display layers
   const proc = await runCommand('ogrinfo', ['-if', 'GPKG', '-al', '-so', '-json', tmpFile], { env: getOgrEnv() })
@@ -209,7 +209,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
       if (shouldBeStopped) return
 
       if (!layers[i].fields[j].type) {
-        await log.warning(`Pas de type pour l'attribut ${layers[i].fields[j].name} de la couche ${i + 1} - ${layers[i].name}`)
+        await log.warning(`The field ${layers[i].fields[j].name} of the layer ${i + 1} - ${layers[i].name} has no type, the layer is skipped`)
         error = true
         break
       }
@@ -245,7 +245,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
     }
 
     if (!error && !layers[i].geometryFields?.length) {
-      await log.warning(`La couche ${i + 1} - ${layers[i].name} n'a pas de géométrie, elle est ignorée`)
+      await log.warning(`The layer ${i + 1} - ${layers[i].name} has no geometry, it is skipped`)
     } else if (!error) {
       // Adding geometries
       layers[i].fields.push({
@@ -263,9 +263,9 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
       const coordinateSystem = layers[i].geometryFields[0].coordinateSystem.wkt
       const srsDefined = !coordinateSystem.includes('Undefined SRS')
 
-      await log.info(`Couche ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lignes`)
+      await log.info(`Layer ${i + 1} - ${layers[i].name} - ${layers[i].featureCount} lines`)
       if (!srsDefined) {
-        await log.warning(`Le SRS (le système de référence spatiale pour le traitement des géométries) n'est pas défini dans le fichier pour la couche ${i + 1} - ${layers[i].name}`)
+        await log.warning(`The file defines no SRS (spatial reference system of the geometries) for the layer ${i + 1} - ${layers[i].name}: set it in the SRS field of the layer (File layers tab)`)
       }
 
       layersFieldList[i + 1] = { name: layers[i].name, fields: layers[i].fields, featureCount: layers[i].featureCount, haveSRS: srsDefined }
@@ -289,7 +289,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
  */
 const createDatasets = async ({ processingConfig: rawConfig, processingId, axios, tmpDir, log } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
   const processingConfig = rawConfig as CreateDatasets & Parameters
-  await log.step('Construction des jeux de données')
+  await log.step('Creating the datasets')
 
   const layersList: LayersList[] = []
 
@@ -317,7 +317,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       const idLayer = layer.nb
       const nameLayer = layer.name
       if (!(idLayer in layersFieldList && layersFieldList[idLayer].name === nameLayer)) {
-        await log.warning(`La couche ${idLayer} - ${nameLayer} n'est pas présente dans les couches disponibles`)
+        await log.warning(`The layer ${idLayer} - ${nameLayer} is not in the file, it is skipped (has the URL changed?)`)
       } else {
         layersListCreate.push(layer)
       }
@@ -326,11 +326,11 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
   // If there are no layers to extract, we stop here to simplify the display of logs on the interface.
   if (layersListCreate.length <= 0) {
-    await log.warning('Pas de couches renseignées')
+    await log.warning('No layer selected, nothing to create')
     return
   }
 
-  await log.info(`Extraction des couches ${layersListCreate.map(layer => (`${layer.nb} - ${layer.name}`)).join(', ')}`)
+  await log.info(`Extracting the layers ${layersListCreate.map(layer => (`${layer.nb} - ${layer.name}`)).join(', ')}`)
 
   // A stop interrupts the loop but the datasets created so far are still returned, so that
   // the config is switched to update mode and the next run refills them instead of
@@ -339,7 +339,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     if (shouldBeStopped) break
 
     await log.info('---')
-    await log.info(`Création du jeu de données pour la couche ${layer.nb} - ${layersFieldList[layer.nb].name}`)
+    await log.info(`Creating the dataset of the layer ${layer.nb} - ${layersFieldList[layer.nb].name}`)
 
     let dataset : { id: string, title: string, href: string, page: string }
 
@@ -347,7 +347,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       const fields = layersFieldList[layer.nb].fields
 
       // Display names and types of the fields for debug
-      await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
+      await log.debug(`   Fields: ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
 
       // Create the dataset, empty
       dataset = (await dfRetry(() => axios.post('api/v1/datasets', {
@@ -358,7 +358,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
         origin: processingConfig.url,
         extras: { processingId }
       }), log, { label: 'POST api/v1/datasets', creates: true })).data
-      await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+      await log.info(`   Dataset created, id="${dataset.id}", title="${dataset.title}"`)
       updateConfig.push({ dataset: { id: dataset.id, href: dataset.href, title: dataset.title }, layer: { nb: layer.nb, name: layer.name } })
 
       if (shouldBeStopped) break
@@ -373,7 +373,7 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       if (!tmpFileGeoJSON) continue
 
       dataset = (await sendFile(axios, log, 'api/v1/datasets', tmpFileGeoJSON, { origin: processingConfig.url, title: layer.title! }, true)).data
-      await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+      await log.info(`   Dataset created, id="${dataset.id}", title="${dataset.title}"`)
       updateConfig.push({ dataset: { id: dataset.id, href: dataset.href, title: dataset.title }, layer: { nb: layer.nb, name: layer.name } })
     }
   }
@@ -398,11 +398,11 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
  */
 const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
   const processingConfig = rawConfig as UpdateDatasets
-  await log.step('Mise à jour des jeux de données')
+  await log.step('Updating the datasets')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
   if (!processingConfig.datasets || processingConfig.datasets.length <= 0) {
-    await log.warning('Pas de mises à jour renseignées')
+    await log.warning('No dataset to update in the configuration')
     return
   }
 
@@ -422,7 +422,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
   for (const update of processingConfig.datasets) {
     if (!update.dataset.id || !update.dataset.title) {
-      await log.warning('Le jeu de données est incomplet (id ou titre manquant)')
+      await log.warning('A dataset of the configuration is incomplete (missing id or title), it is skipped')
       await log.info('')
       continue
     }
@@ -432,9 +432,9 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       targetDataset = (await axios.get(`api/v1/datasets/${update.dataset.id}`)).data
     } catch (err : any) {
       if ((err.status ?? err.response?.status) === 404) {
-        await log.warning('Le jeu de données n\'existe pas. Il a peut-être été supprimé.')
+        await log.warning(`The dataset ${update.dataset.title} (${update.dataset.id}) does not exist, it may have been deleted`)
       } else {
-        await log.warning('L\'identification du jeu de données a échoué.')
+        await log.warning(`The dataset ${update.dataset.title} (${update.dataset.id}) could not be read (${err.status ?? err.response?.status ?? err.message}), it is skipped`)
       }
       await log.info('')
       continue
@@ -442,7 +442,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
     // SECURITY (normally not necessary) : Checking the availability of the layers (in the event that the download URL has been changed accidentally)
     if (!(update.layer.nb! in layersFieldList && update.layer.name! === layersFieldList[update.layer.nb!].name)) {
-      await log.warning(`La couche ${update.layer.nb} - ${update.layer.name} n'est pas présente dans les couches disponibles`)
+      await log.warning(`The layer ${update.layer.nb} - ${update.layer.name} is not in the file, the dataset ${update.dataset.title} is skipped (has the URL changed?)`)
       await log.info('')
       continue
     }
@@ -456,7 +456,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
   const pendingFinalizations: PendingFinalization[] = []
   const updatePendingFinalizations: PendingFinalization[] = []
-  const updateProgressName = 'En attente de la finalisation de la mise à jour des schémas'
+  const updateProgressName = 'Waiting for the schema updates to be finalized'
   const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, layer: { nb?: number, name?: string } }[] = []
   // datasets whose drop / schema update failed: sending lines to them would only mix old and new data
   const failedDatasets = new Set<string>()
@@ -476,7 +476,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       if (shouldBeStopped) return
 
       if (update.forceUpdate) {
-        await log.info(`Mise à jour forcée du schéma du jeu de données ${dataset.title}`)
+        await log.info(`Forced schema update of the dataset ${dataset.title}`)
 
         const updateSchema = async () => {
           // Drop the old data
@@ -495,7 +495,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           if (shouldBeStopped) return
 
           if (updateDataset.data.status !== 'finalized') {
-            pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'a été finalisé' },
+            pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'is finalized' },
               { name: updateProgressName, total: processingConfig.datasets!.length, progressType: 'update' }, stopSignal))
           } else {
             pendingFinalizations.push(addUpdate(log, updateProgressName, processingConfig.datasets!.length, dataset.id!, dataset.title!, stopSignal))
@@ -508,7 +508,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
         listUpdatesDatasets.push(update)
       } else {
         // Check if the schemas match.
-        await log.info(`Vérification de la compatibilité des schémas pour le jeu de données ${dataset.title} et la couche ${idLayer} - ${nameLayer}`)
+        await log.info(`Checking that the schema of the dataset ${dataset.title} matches the layer ${idLayer} - ${nameLayer}`)
 
         let compatible = true
         const datasetSchemaMap = new Map(datasetSchema.map(datasetField => [datasetField.key.toLowerCase(), datasetField.type.toLowerCase()]))
@@ -533,14 +533,14 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           const updateSchema = async () => {
             await dfRetry(() => axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, []), log, { label: `POST api/v1/datasets/${dataset.id}/_bulk_lines`, creates: true })
 
-            pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'a été finalisé' },
+            pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'is finalized' },
               { name: updateProgressName, total: processingConfig.datasets!.length, progressType: 'update' }, stopSignal))
           }
 
           // We are certain of the ID and title definitions with the previous check.
           updatePendingFinalizations.push(trackUpdateSchema(log, dataset.id!, dataset.title!, updateSchema, stopSignal))
         } else {
-          await log.warning(`Les schémas du jeu de données ${dataset.title} et de la couche ${idLayer} - ${nameLayer} ne sont pas compatibles`)
+          await log.warning(`The schema of the dataset ${dataset.title} does not match the layer ${idLayer} - ${nameLayer}, the dataset is not updated (enable "Force schema update" to replace its schema)`)
           await log.info('')
           pendingFinalizations.push(addUpdate(log, updateProgressName, processingConfig.datasets!.length, dataset.id!, dataset.title!, stopSignal))
           continue
@@ -548,7 +548,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       }
     } else {
       if (update.forceUpdate) {
-        await log.info(`Mise à jour forcée du schéma du jeu de données ${dataset.title}`)
+        await log.info(`Forced schema update of the dataset ${dataset.title}`)
       }
       listUpdatesDatasets.push(update)
     }
@@ -588,10 +588,10 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
     await log.info('')
     if (failedDatasets.has(dataset.id!)) {
-      await log.warning(`Le jeu ${dataset.title} n'est pas mis à jour car la suppression de ses anciennes données a échoué`)
+      await log.warning(`The dataset ${dataset.title} is not updated: deleting its previous lines or updating its schema failed`)
       continue
     }
-    await log.info(`Mise à jour du jeu ${dataset.title} avec la couche ${idLayer} - ${nameLayer}`)
+    await log.info(`Updating the dataset ${dataset.title} with the layer ${idLayer} - ${nameLayer}`)
 
     // Data update
     if (editable) {
@@ -618,7 +618,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
       if (shouldBeStopped) return
 
-      await log.info('Mise à jour complète')
+      await log.info('File uploaded')
       await log.info('')
     }
   }

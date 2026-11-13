@@ -160,6 +160,6 @@ describe('Geopackage processing', () => {
     context.log.info = async (msg: string, ...args: any[]) => { logs.push(msg); return info(msg, ...args) }
 
     await gpkgPlugin.run(context)
-    assert.ok(logs.some(l => /update (is )?complete/i.test(l) || /Mise à jour complète/.test(l)), 'the file was uploaded')
+    assert.ok(logs.includes('File uploaded'), 'the file was uploaded')
   })
 })
