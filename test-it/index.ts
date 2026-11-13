@@ -32,6 +32,16 @@ const waitIndexed = async (axios: any, datasetId: string, expected: number) => {
   assert.fail(`dataset ${datasetId} was not indexed with ${expected} lines`)
 }
 
+// a file dataset accepts a new file only once its previous one has been processed (409 otherwise)
+const waitFinalized = async (axios: any, datasetId: string) => {
+  for (let i = 0; i < 30; i++) {
+    const { status } = (await axios.get(`api/v1/datasets/${datasetId}`)).data
+    if (status === 'finalized') return
+    await new Promise(resolve => setTimeout(resolve, 2000))
+  }
+  assert.fail(`dataset ${datasetId} was not finalized`)
+}
+
 /**
  * Lists the layers of a file, creates datasets from some of them, then updates these datasets.
  */
@@ -46,6 +56,7 @@ describe('Geopackage processing', () => {
 
   // config produced by the create test, reused by the update test
   let createdConfig: any
+  let createdFileConfig: any
   let axios: any
   const createdIds: string[] = []
 
@@ -137,5 +148,18 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
     assert.equal(context.processingConfig.datasetMode, 'update')
     createdIds.push(context.processingConfig.datasets[0].dataset.id)
+    createdFileConfig = context.processingConfig
+  })
+
+  it('should run a task with a gpkg file to update a file dataset', async function () {
+    assert.ok(createdFileConfig, 'the file create test must succeed first')
+    await waitFinalized(axios, createdFileConfig.datasets[0].dataset.id)
+    const logs: string[] = []
+    const context = testUtils.context({ processingConfig: createdFileConfig, tmpDir: 'data/' }, config, false)
+    const info = context.log.info
+    context.log.info = async (msg: string, ...args: any[]) => { logs.push(msg); return info(msg, ...args) }
+
+    await gpkgPlugin.run(context)
+    assert.ok(logs.some(l => /update (is )?complete/i.test(l) || /Mise à jour complète/.test(l)), 'the file was uploaded')
   })
 })

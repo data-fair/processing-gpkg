@@ -11,8 +11,9 @@ import type { LayersList, GpkgProcessingContext } from './context.ts'
 import { fetchHTTP } from './fetch.ts'
 import { createTmpFile, removeSymlinks } from './tmp-file.ts'
 import { runCommand, getOgrEnv } from './spawn-process.ts'
-import { addUpdate, displayingProgress, nbUpdate, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
+import { addUpdate, displayingProgress, nbUpdate, resetTracking, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
 import { normalizedSRS } from './utils/normalizeSRS.ts'
+import { dfRetry } from './retry.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -30,6 +31,29 @@ export const stop: () => Promise<void> = async () => {
   resolveStop()
 }
 
+/**
+ * POST a GeoJSON file to data-fair as a multipart form. The form is rebuilt on every
+ * attempt of the retry: the file stream it holds can only be read once.
+ */
+const sendFile = async (axios: GpkgProcessingContext['axios'], log: GpkgProcessingContext['log'], url: string, filePath: string, fields: Record<string, string>, creates = false) => {
+  return await dfRetry(async () => {
+    const formData = new FormData()
+    for (const [key, value] of Object.entries(fields)) formData.append(key, value)
+    formData.append('file', fs.createReadStream(filePath), { filename: path.basename(filePath) })
+    const getLength = util.promisify(formData.getLength.bind(formData))
+    const contentLength = await getLength()
+    await log.info(`Chargement de ${formatBytes(contentLength!)}`)
+    return await axios({
+      method: 'post',
+      url,
+      data: formData,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      headers: { ...formData.getHeaders(), 'content-length': contentLength }
+    })
+  }, log, { label: `POST ${url}`, creates })
+}
+
 type GeometrySRS = { haveSRS: boolean, SRS: string }
 type LayersFieldList = Record<number, { name: string, fields: any[], featureCount: number, haveSRS: boolean, geometrySRS?: GeometrySRS }>
 
@@ -40,6 +64,7 @@ type LayersFieldList = Record<number, { name: string, fields: any[], featureCoun
 export const run: RunFunction<ProcessingConfig> = async (context) => {
   shouldBeStopped = false
   stopSignal = new Promise<void>(resolve => { resolveStop = resolve })
+  resetTracking()
 
   try {
     // Retrieving the contextual elements necessary for processing
@@ -75,6 +100,9 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
       await patchConfig({ datasetMode: 'create', haveList: true, layers: createConfig, dataset: { editableCreate: false }, url: processingConfig.url.trim() } as any)
     }
   } finally {
+    // nothing is uploaded after a stop, but an editable dataset that was being filled keeps
+    // the lines already sent: a new run refills it
+    if (shouldBeStopped) await context.log.warning('Traitement interrompu, les jeux de données éditables en cours de remplissage peuvent être incomplets : relancez le traitement pour les remplir.')
     // Settle the stop signal so any continuation chained on it (the `stopSignal.then(...)`
     // branches inside `trackFinalization`) is released. At this point all the relevant
     // `Promise.race` calls have already resolved via the journal branch, so this late
@@ -121,7 +149,7 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
     await log.info(`Dézippage du fichier ${filename}`)
 
     // Unzip
-    await runCommand('unzip', ['-j', tmpFile, '-d', `${tmpFile}-dezip`])
+    await runCommand('unzip', ['-o', '-j', tmpFile, '-d', `${tmpFile}-dezip`])
     await removeSymlinks(`${tmpFile}-dezip`)
 
     // We are looking for the .gpkg files contained in the .zip file.
@@ -304,8 +332,11 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
   await log.info(`Extraction des couches ${layersListCreate.map(layer => (`${layer.nb} - ${layer.name}`)).join(', ')}`)
 
+  // A stop interrupts the loop but the datasets created so far are still returned, so that
+  // the config is switched to update mode and the next run refills them instead of
+  // creating duplicates
   for (const layer of layersListCreate) {
-    if (shouldBeStopped) return
+    if (shouldBeStopped) break
 
     await log.info('---')
     await log.info(`Création du jeu de données pour la couche ${layer.nb} - ${layersFieldList[layer.nb].name}`)
@@ -319,17 +350,18 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       await log.debug(`   Champs : ${fields.map(f => `${f.key} (${f.type})`).join(', ')}`)
 
       // Create the dataset, empty
-      dataset = (await axios.post('api/v1/datasets', {
+      dataset = (await dfRetry(() => axios.post('api/v1/datasets', {
         title: `${layer.title}`,
         description: '',
         isRest: true,
         schema: fields,
         origin: processingConfig.url,
         extras: { processingId }
-      })).data
+      }), log, { label: 'POST api/v1/datasets', creates: true })).data
       await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+      updateConfig.push({ dataset: { id: dataset.id, href: dataset.href, title: dataset.title }, layer: { nb: layer.nb, name: layer.name } })
 
-      if (shouldBeStopped) return
+      if (shouldBeStopped) break
 
       // Dataset population
       idStream += 1
@@ -337,35 +369,13 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       streamPendingFinalizations.push(trackAddLayer(axios, log, dataset.id, dataset.title, streamInformation, stopSignal))
     } else {
       const tmpFileGeoJSON = await createTmpFile(tmpDir, tmpFile, layer.name, layer.haveSRS, layer.SRS, log, () => shouldBeStopped)
-      if (shouldBeStopped) return
+      if (shouldBeStopped) break
       if (!tmpFileGeoJSON) continue
 
-      const formData = new FormData()
-      formData.append('origin', processingConfig.url)
-      formData.append('title', layer.title)
-      formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
-      const getLength = util.promisify(formData.getLength.bind(formData))
-      const contentLength = await getLength()
-      await log.info(`Chargement de ${formatBytes(contentLength!)}`)
-
-      if (shouldBeStopped) return
-
-      dataset = (await axios({
-        method: 'post',
-        url: 'api/v1/datasets',
-        data: formData,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        headers: { ...formData.getHeaders(), 'content-length': contentLength }
-      })).data
+      dataset = (await sendFile(axios, log, 'api/v1/datasets', tmpFileGeoJSON, { origin: processingConfig.url, title: layer.title! }, true)).data
       await log.info(`   Jeu de données créé, id="${dataset.id}", titre="${dataset.title}"`)
+      updateConfig.push({ dataset: { id: dataset.id, href: dataset.href, title: dataset.title }, layer: { nb: layer.nb, name: layer.name } })
     }
-
-    if (shouldBeStopped) return
-
-    const datasetObject = { id: dataset.id, href: dataset.href, title: dataset.title }
-    const updateObject = { dataset: datasetObject, layer: { nb: layer.nb, name: layer.name } }
-    updateConfig.push(updateObject)
   }
 
   if (streamPendingFinalizations.length > 0) {
@@ -447,7 +457,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
   const pendingFinalizations: PendingFinalization[] = []
   const updatePendingFinalizations: PendingFinalization[] = []
   const updateProgressName = 'En attente de la finalisation de la mise à jour des schémas'
-  const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, layer: { nb?: number, name?: string }, formData?: FormData }[] = []
+  const listUpdatesDatasets: { [k: string]: unknown, forceUpdate?: boolean, dataset: ExistingDataset, layer: { nb?: number, name?: string } }[] = []
   // datasets whose drop / schema update failed: sending lines to them would only mix old and new data
   const failedDatasets = new Set<string>()
 
@@ -470,7 +480,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
         const updateSchema = async () => {
           // Drop the old data
-          await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+          await dfRetry(() => axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, []), log, { label: `POST api/v1/datasets/${dataset.id}/_bulk_lines`, creates: true })
           if (shouldBeStopped) return
 
           // We are waiting for the dataset to finish processing.
@@ -478,10 +488,10 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           await ws.waitForJournal(dataset.id!, 'finalize-end')
 
           // Update the schema
-          const updateDataset = await axios.post(`api/v1/datasets/${dataset.id}`, {
+          const updateDataset = await dfRetry(() => axios.post(`api/v1/datasets/${dataset.id}`, {
             schema: layersFieldList[idLayer].fields,
             origin: processingConfig.url
-          })
+          }), log, { label: `POST api/v1/datasets/${dataset.id}` })
           if (shouldBeStopped) return
 
           if (updateDataset.data.status !== 'finalized') {
@@ -521,7 +531,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
           // Drop the old data
           if (shouldBeStopped) return
           const updateSchema = async () => {
-            await axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, [])
+            await dfRetry(() => axios.post(`api/v1/datasets/${dataset.id}/_bulk_lines?drop=true`, []), log, { label: `POST api/v1/datasets/${dataset.id}/_bulk_lines`, creates: true })
 
             pendingFinalizations.push(trackFinalization(ws, log, dataset.id!, dataset.title!, { successMessage: 'a été finalisé' },
               { name: updateProgressName, total: processingConfig.datasets!.length, progressType: 'update' }, stopSignal))
@@ -572,7 +582,6 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
     const dataset = update.dataset
     const idLayer = update.layer.nb!
     const nameLayer = update.layer.name!
-    const formData = new FormData()
     const editable = update.editable
     const layerSRSDefined = layersFieldList[idLayer].geometrySRS?.haveSRS ?? layersFieldList[idLayer].haveSRS
     const layerSRS = layersFieldList[idLayer].geometrySRS?.SRS ?? ''
@@ -605,22 +614,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       if (shouldBeStopped) return
       if (!tmpFileGeoJSON) continue
 
-      formData.append('file', await fs.createReadStream(tmpFileGeoJSON), { filename: path.parse(tmpFileGeoJSON).base })
-      formData.append('origin', processingConfig.url)
-      const getLength = util.promisify(formData!.getLength.bind(formData))
-      const contentLength = await getLength()
-      await log.info(`Chargement de ${formatBytes(contentLength!)}`)
-
-      if (shouldBeStopped) return
-
-      await axios({
-        method: 'post',
-        url: `api/v1/datasets/${dataset.id}${update.forceUpdate ? '' : '?draft=true'}`,
-        data: formData,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        headers: { ...formData!.getHeaders(), 'content-length': contentLength }
-      })
+      await sendFile(axios, log, `api/v1/datasets/${dataset.id}${update.forceUpdate ? '' : '?draft=true'}`, tmpFileGeoJSON, { origin: processingConfig.url as string })
 
       if (shouldBeStopped) return
 

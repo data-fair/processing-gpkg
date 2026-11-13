@@ -1,5 +1,14 @@
-import type { RunFunction } from '@data-fair/lib-common-types/processings.js'
+import type { PrepareFunction, RunFunction } from '@data-fair/lib-common-types/processings.js'
 import type { ProcessingConfig } from './types/processingConfig/index.ts'
+
+/**
+ * Function to prepare a processing (triggered when the config is updated).
+ * This plugin has no secret, the config is returned unchanged.
+ */
+export const prepare: PrepareFunction<ProcessingConfig> = async (context) => {
+  const prepare = (await import('./lib/prepare.ts')).default
+  return prepare(context)
+}
 
 /**
  * Function to execute the processing (triggered when the processing is started).

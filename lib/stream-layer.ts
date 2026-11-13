@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 
 import { getOgrEnv, layerArg } from './spawn-process.ts'
+import { dfRetry, errorData } from './retry.ts'
 
 import type { GpkgProcessingContext } from './context.ts'
 
@@ -38,20 +39,11 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
     if (batch.length === 0) return
     const toSend = batch.splice(0)
     total += toSend.length
-    // POST is not retried by the worker axios, so we retry 429 (rate limit) ourselves
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend)
-        break
-      } catch (err: any) {
-        if ((err.status ?? err.response?.status) === 429 && attempt < 3) {
-          await log.warning(`429 reçu de data-fair — pause 10s avant nouvelle tentative (${attempt + 1}/3)`)
-          await new Promise(resolve => setTimeout(resolve, 10000))
-          continue
-        }
-        await log.error(`Erreur bulk_lines : ${JSON.stringify(err.data ?? err.response?.data)}`)
-        throw err
-      }
+    try {
+      await dfRetry(() => axios.post(`api/v1/datasets/${datasetId}/_bulk_lines`, toSend), log, { label: `POST api/v1/datasets/${datasetId}/_bulk_lines`, creates: true })
+    } catch (err: any) {
+      await log.error(`Erreur bulk_lines : ${JSON.stringify(errorData(err))}`)
+      throw err
     }
     await log.progress(progressName, total, layerFeatureCount)
   }

@@ -5,6 +5,13 @@ export let nbFinalize = 0
 export let nbUpdate = 0
 let displayProgress: boolean = false
 
+// The counters are module state: reset them at the start of each run
+export const resetTracking = () => {
+  nbFinalize = 0
+  nbUpdate = 0
+  displayProgress = false
+}
+
 // Use to enable or disable progress log display at the right time
 export const displayingProgress = (display = true) => {
   displayProgress = display
