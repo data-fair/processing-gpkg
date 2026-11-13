@@ -78,6 +78,9 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
   let lineCount = 0
 
   // Analysis chunk by chunk; a chunk corresponds to a piece of data, not necessarily a complete line
+  // decode as a stream: a multi-byte UTF-8 character split between two chunks would
+  // otherwise be replaced by U+FFFD in both halves
+  proc.stdout.setEncoding('utf8')
   for await (const chunk of proc.stdout) {
     if (isStopped()) {
       proc.kill()
@@ -86,7 +89,7 @@ export const streamLayerToDataset = async (idStream : number, tmpFile: string, l
     }
 
     // Text accumulation
-    textBuffer += chunk.toString()
+    textBuffer += chunk
     const lines = textBuffer.split('\n')
     textBuffer = lines.pop() ?? ''
 
