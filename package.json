@@ -29,19 +29,21 @@
   },
   "homepage": "https://github.com/data-fair/processing-gpkg#readme",
   "devDependencies": {
-    "@commitlint/cli": "^19.8.1",
-    "@commitlint/config-conventional": "^19.8.1",
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
     "@data-fair/lib-common-types": "^1.20.6",
     "@data-fair/lib-processing-dev": "^0.3.0",
     "@data-fair/lib-types-builder": "^1.7.0",
     "@types/debug": "^4.1.13",
     "@types/fs-extra": "^11.0.4",
-    "config": "^4.4.1",
+    "@types/node": "^24.19.2",
+    "axios": "^1.21.1",
+    "config": "^5.0.1",
     "eslint": "^9.26.0",
     "husky": "^9.1.7",
     "neostandard": "^0.12.1",
     "typescript": "^5.8.3",
-    "ws": "^8.19.0"
+    "ws": "^8.23.0"
   },
   "files": [
     "processing-config-schema.json",
