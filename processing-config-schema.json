@@ -149,7 +149,8 @@
                     },
                     "layout": {
                       "getItems": {
-                        "url": "${context.dataFairUrl}/api/v1/datasets?q={q}&select=id,title&size=50&${context.ownerFilter}",
+                        "url": "${context.dataFairUrl}/api/v1/datasets?select=id,title&size=50&${context.ownerFilter}",
+                        "qSearchParam": "q",
                         "itemsResults": "data.results",
                         "itemTitle": "item.title",
                         "itemKey": "item.id"
@@ -173,6 +174,7 @@
                       }
                     },
                     "layout": {
+                      "comp": "autocomplete",
                       "getItems": {
                         "expr": "parent.parent.parent.parent.data.layers || []",
                         "itemsResults": "data",
