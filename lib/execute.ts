@@ -449,7 +449,9 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
     const goodUpdate = {
       ...update,
-      editable: targetDataset.isRest ?? false
+      editable: targetDataset.isRest ?? false,
+      // kept for the schema check below, the dataset does not change in between
+      schema: (targetDataset.schema ?? []) as { key: string, type: string }[]
     }
     datasetsUpdate.push(goodUpdate)
   }
@@ -472,8 +474,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
     if (editable) {
       // Retrieving the dataset schema
-      const datasetSchema : { key: string, type: string }[] = (await axios.get(`api/v1/datasets/${dataset.id}`)).data.schema
-      if (shouldBeStopped) return
+      const datasetSchema = update.schema
 
       if (update.forceUpdate) {
         await log.info(`Forced schema update of the dataset ${dataset.title}`)
