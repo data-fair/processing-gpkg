@@ -13,7 +13,8 @@ import { createTmpFile, removeSymlinks } from './tmp-file.ts'
 import { runCommand, getOgrEnv } from './spawn-process.ts'
 import { addUpdate, displayingProgress, nbUpdate, resetTracking, trackAddLayer, trackFinalization, trackUpdateSchema, type PendingFinalization } from './track.ts'
 import { normalizedSRS } from './utils/normalizeSRS.ts'
-import { dfRetry } from './retry.ts'
+import { dfRetry, errorStatus } from './retry.ts'
+import { attachToParent, createParentDataset, partOfParent } from './fragments.ts'
 
 /**
  * Allows for a requested program shutdown to be scheduled.
@@ -69,21 +70,30 @@ export const run: RunFunction<ProcessingConfig> = async (context) => {
   try {
     // Retrieving the contextual elements necessary for processing
     const { processingConfig, patchConfig } = context
-    const tmpFile = await download(context)
+    const downloaded = await download(context)
 
     if (shouldBeStopped) return
-    if (!tmpFile) return
+    if (!downloaded) return
+    const { tmpFile, fileTitle } = downloaded
     const layersFieldList = await extraction(context, tmpFile)
 
     if (shouldBeStopped) return
     if (!layersFieldList) return
 
     if (processingConfig.datasetMode === 'create') {
-      const result = await createDatasets(context, layersFieldList, tmpFile)
+      const result = await createDatasets(context, layersFieldList, tmpFile, fileTitle)
 
-      if (result?.updateConfig?.length) await patchConfig({ datasetMode: 'update', datasets: result.updateConfig, layers: result.layersList, url: processingConfig.url.trim() } as any)
+      if (result?.updateConfig?.length) {
+        await patchConfig({
+          datasetMode: 'update',
+          datasets: result.updateConfig,
+          layers: result.layersList,
+          url: processingConfig.url.trim(),
+          ...(result.parentDataset ? { parentDataset: result.parentDataset } : {})
+        } as any)
+      }
     } else if (processingConfig.datasetMode === 'update') {
-      await updateDatasets(context, layersFieldList, tmpFile)
+      await updateDatasets(context, layersFieldList, tmpFile, fileTitle)
       await patchConfig({ url: processingConfig.url.trim() } as any)
     } else {
       const createConfig: LayersList[] = Object.keys(layersFieldList).map(idLayer => ({
@@ -179,7 +189,8 @@ const download = async ({ processingConfig, tmpDir, axios, log } : GpkgProcessin
 
   await log.info(`Processing ${gpkgFilename}`)
 
-  return tmpFile
+  // the title given to a parent dataset grouping the layers
+  return { tmpFile, fileTitle: path.parse(gpkgFilename).name || 'GeoPackage' }
 }
 
 /**
@@ -287,7 +298,7 @@ const extraction = async ({ log }: GpkgProcessingContext, tmpFile : string) => {
  * @param tmpFile           Full path of the file to be processed
  * @returns   A list of objects associating layers and datasets, or nothing at all to stop the program
  */
-const createDatasets = async ({ processingConfig: rawConfig, processingId, axios, tmpDir, log } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
+const createDatasets = async ({ processingConfig: rawConfig, processingId, axios, tmpDir, log } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string, fileTitle: string) => {
   const processingConfig = rawConfig as CreateDatasets & Parameters
   await log.step('Creating the datasets')
 
@@ -332,6 +343,12 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
 
   await log.info(`Extracting the layers ${layersListCreate.map(layer => (`${layer.nb} - ${layer.name}`)).join(', ')}`)
 
+  // a single layer stays a standalone dataset: a parent would only add a level
+  const parentDataset = processingConfig.groupDatasets && layersListCreate.length > 1
+    ? await createParentDataset(axios, fileTitle, processingConfig.url, log)
+    : undefined
+  const partOf = parentDataset ? partOfParent(parentDataset.id) : undefined
+
   // A stop interrupts the loop but the datasets created so far are still returned, so that
   // the config is switched to update mode and the next run refills them instead of
   // creating duplicates
@@ -356,7 +373,8 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
         isRest: true,
         schema: fields,
         origin: processingConfig.url,
-        extras: { processingId }
+        extras: { processingId },
+        ...(partOf ? { partOf } : {})
       }), log, { label: 'POST api/v1/datasets', creates: true })).data
       await log.info(`   Dataset created, id="${dataset.id}", title="${dataset.title}"`)
       updateConfig.push({ dataset: { id: dataset.id, href: dataset.href, title: dataset.title }, layer: { nb: layer.nb, name: layer.name } })
@@ -372,7 +390,10 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
       if (shouldBeStopped) break
       if (!tmpFileGeoJSON) continue
 
-      dataset = (await sendFile(axios, log, 'api/v1/datasets', tmpFileGeoJSON, { origin: processingConfig.url, title: layer.title! }, true)).data
+      // a multipart body carries object properties as JSON strings
+      const fields: Record<string, string> = { origin: processingConfig.url, title: layer.title! }
+      if (partOf) fields.partOf = JSON.stringify(partOf)
+      dataset = (await sendFile(axios, log, 'api/v1/datasets', tmpFileGeoJSON, fields, true)).data
       await log.info(`   Dataset created, id="${dataset.id}", title="${dataset.title}"`)
       updateConfig.push({ dataset: { id: dataset.id, href: dataset.href, title: dataset.title }, layer: { nb: layer.nb, name: layer.name } })
     }
@@ -382,7 +403,13 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
   }
 
-  return { layersList, updateConfig }
+  if (parentDataset && !updateConfig.length) {
+    // stopped before the first layer: an empty parent would be left behind
+    await axios.delete(`api/v1/datasets/${parentDataset.id}`)
+    return
+  }
+
+  return { layersList, updateConfig, parentDataset }
 }
 
 /**
@@ -396,8 +423,8 @@ const createDatasets = async ({ processingConfig: rawConfig, processingId, axios
  * @param tmpFile           Full path of the file to be processed
  * @returns   Returns nothing, used to stop the program
  */
-const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log, ws } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string) => {
-  const processingConfig = rawConfig as UpdateDatasets
+const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log, ws, patchConfig } : GpkgProcessingContext, layersFieldList: LayersFieldList, tmpFile: string, fileTitle: string) => {
+  const processingConfig = rawConfig as UpdateDatasets & Parameters
   await log.step('Updating the datasets')
 
   // If there are no updates to extract, we stop here to simplify the display of logs on the interface.
@@ -449,12 +476,15 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
     const goodUpdate = {
       ...update,
+      live: { ...targetDataset, id: update.dataset.id } as { id: string, title?: string, partOf?: { type: string, id: string } },
       editable: targetDataset.isRest ?? false,
       // kept for the schema check below, the dataset does not change in between
       schema: (targetDataset.schema ?? []) as { key: string, type: string }[]
     }
     datasetsUpdate.push(goodUpdate)
   }
+
+  await syncGrouping({ processingConfig, axios, log, patchConfig }, datasetsUpdate.map(update => update.live), fileTitle)
 
   const pendingFinalizations: PendingFinalization[] = []
   const updatePendingFinalizations: PendingFinalization[] = []
@@ -626,5 +656,39 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
 
   if (streamPendingFinalizations.length > 0) {
     await Promise.allSettled(streamPendingFinalizations.map(p => p.promise))
+  }
+}
+
+/**
+ * Apply the grouping checkbox to datasets created earlier: checked, attach them to the
+ * parent (created on the spot when the config has none yet, or when it was deleted).
+ * Unchecked, or saved before the checkbox existed, nothing changes. A single dataset
+ * gets no parent of its own.
+ */
+export const syncGrouping = async (
+  { processingConfig, axios, log, patchConfig }: Pick<GpkgProcessingContext, 'axios' | 'log' | 'patchConfig'> & { processingConfig: UpdateDatasets & Parameters },
+  lives: { id: string, title?: string, partOf?: { type: string, id: string } }[],
+  fileTitle: string
+) => {
+  if (processingConfig.groupDatasets !== true || !lives.length) return
+  let parent = processingConfig.parentDataset?.id ? processingConfig.parentDataset as { id: string, title?: string } : undefined
+
+  if (parent) {
+    try {
+      await axios.get(`api/v1/datasets/${parent.id}`)
+    } catch (err: any) {
+      if (errorStatus(err) !== 404) throw err
+      await log.warning(`The parent dataset ${parent.id} no longer exists, a new one is created`)
+      parent = undefined
+    }
+  }
+  if (!parent) {
+    if (lives.length < 2) return
+    await log.step('Grouping the datasets')
+    parent = await createParentDataset(axios, fileTitle, processingConfig.url, log)
+    await patchConfig({ parentDataset: parent } as any)
+  }
+  for (const live of lives) {
+    await attachToParent(axios, live, parent.id, log)
   }
 }

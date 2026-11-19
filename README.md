@@ -26,6 +26,7 @@ For this mode, you only need to enter the URL in the Parameters tab.
 | Tab | Field | Description |
 | --- | ----- | ----------- |
 | Datasets | `editableCreate` | By default, file-based datasets are created ; by checking this box, editable datasets can be created |
+| Datasets | `groupDatasets` | Checked by default: with two layers or more, a metadata-only parent dataset named after the file is created and the layer datasets become its fragments (see [Grouping](#grouping)) |
 | File layers | `addAllLayers` | Allows you to build datasets directly for all layers of the file |
 | File layers - Layers | `add` | Allows you to build a dataset with the corresponding layer by checking the box |
 | File layers - Layers | `title` | This corresponds to the name you want for your dataset. By default, the title will be the layer name. |
@@ -38,6 +39,11 @@ For this mode, you only need to enter the URL in the Parameters tab.
 | Datasets - Datasets to update | `dataset` | Name of the dataset to update, selectable from the list of available datasets |
 | Datasets - Datasets to update | `layer` | Name of the layer from which the update should be made, selectable from the list of available layers. |
 | Datasets - Datasets to update | `forceUpdate` | Indicates whether the scheme update should also be forced |
+| Datasets | `groupDatasets` | Checked: attaches the datasets not grouped yet to the parent, a metadata-only dataset named after the file (created if the configuration has none and at least two datasets are updated). Unchecked, or absent (configuration saved before the option): nothing changes, and unchecking detaches nothing |
+
+### Grouping
+
+Grouped datasets are data-fair fragments (`partOf`) of a metadata-only parent: they are hidden from the datasets list, presented on the parent's page, take its permissions and are deleted with it. The parent is what gets published on portals and catalogs; a fragment cannot be published on its own, so Data-fair refuses to attach a dataset that already is — the run logs a warning and still updates its data. The parent's id is kept in the configuration (`parentDataset`).
 
 *Note: the detection of the type of dataset (file or editable) during the update is done automatically, so it is possible to update datasets of both types at the same time.*
 

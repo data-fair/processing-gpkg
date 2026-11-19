@@ -68,6 +68,14 @@
                   "x-i18n-description": { "fr": "Par défaut, on crée des jeux de données fichier, moins coûteux en mémoire, mais difficilement actualisables." }
                 }
               }
+            },
+            "groupDatasets": {
+              "type": "boolean",
+              "default": true,
+              "title": "Group the datasets under a parent dataset",
+              "x-i18n-title": { "fr": "Regrouper les jeux sous un jeu parent" },
+              "description": "The created datasets become fragments of a parent dataset: they no longer appear in the datasets list, are presented on its page, take its permissions and are deleted with it. Publish the parent on your portals: the fragments follow it and cannot be published on their own. The parent is a metadata-only dataset named after the file; a single layer stays a standalone dataset.",
+              "x-i18n-description": { "fr": "Les jeux créés deviennent des fragments d'un jeu parent : ils n'apparaissent plus dans la liste des jeux de données, sont présentés sur sa page, reprennent ses permissions et sont supprimés avec lui. Publiez le parent sur vos portails : les fragments le suivent et ne peuvent pas être publiés seuls. Le parent est un jeu de métadonnées seules qui porte le nom du fichier ; une seule couche reste un jeu autonome." }
             }
           },
           "layout": {
@@ -75,6 +83,7 @@
             "children": [
               "datasetMode",
               "dataset",
+              "groupDatasets",
               {
                 "markdown": "Select the layers you want to add in the **File Layers** tab.",
                 "x-i18n-markdown": {
@@ -149,7 +158,7 @@
                     },
                     "layout": {
                       "getItems": {
-                        "url": "${context.dataFairUrl}/api/v1/datasets?select=id,title&size=50&${context.ownerFilter}",
+                        "url": "${context.dataFairUrl}/api/v1/datasets?select=id,title&size=50&${context.ownerFilter}&partOf=false,true",
                         "qSearchParam": "q",
                         "itemsResults": "data.results",
                         "itemTitle": "item.title",
@@ -189,6 +198,22 @@
                     "x-i18n-title": { "fr": "Forcer la mise à jour du schéma" }
                   }
                 }
+              }
+            },
+            "groupDatasets": {
+              "type": "boolean",
+              "title": "Group the datasets under a parent dataset",
+              "x-i18n-title": { "fr": "Regrouper les jeux sous un jeu parent" },
+              "description": "Checked, the next run attaches the datasets not grouped yet to the parent dataset, a metadata-only dataset named after the file. It is created if the configuration has none yet and at least two datasets are updated.",
+              "x-i18n-description": { "fr": "Cochée, la prochaine exécution rattache les jeux pas encore regroupés au jeu parent, un jeu de métadonnées seules qui porte le nom du fichier. Il est créé si la configuration n'en a pas encore et qu'au moins deux jeux sont mis à jour." }
+            },
+            "parentDataset": {
+              "type": "object",
+              "description": "Metadata-only dataset the datasets are attached to, written by the processing.",
+              "layout": "none",
+              "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" }
               }
             }
           },

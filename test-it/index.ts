@@ -162,4 +162,58 @@ describe('Geopackage processing', () => {
     await gpkgPlugin.run(context)
     assert.ok(logs.includes('File uploaded'), 'the file was uploaded')
   })
+
+  const twoLayers = [
+    { add: true, nb: 1, name: 'region', lines: 19, titleEditable: 'test-gpkg-group-region' },
+    { add: true, nb: 2, name: 'departement', lines: 4, titleEditable: 'test-gpkg-group-departement' }
+  ]
+
+  const assertGrouped = async (processingConfig: any) => {
+    const parentId = processingConfig.parentDataset?.id
+    assert.ok(parentId, 'the parent is kept in the config')
+    const parent = (await axios.get(`api/v1/datasets/${parentId}`)).data
+    assert.equal(parent.isMetaOnly, true)
+    for (const { dataset } of processingConfig.datasets) {
+      const child = (await axios.get(`api/v1/datasets/${dataset.id}`)).data
+      assert.deepEqual(child.partOf, { type: 'dataset', id: parentId })
+    }
+    // fragments are hidden from the default listing, and listed under their parent
+    const listed = (await axios.get('api/v1/datasets', { params: { partOf: `dataset:${parentId}`, select: 'id' } })).data
+    assert.equal(listed.count, processingConfig.datasets.length)
+  }
+
+  it('should group several layers under a metadata-only parent', async function () {
+    const context = testUtils.context({
+      processingConfig: { datasetMode: 'create', dataset: { editableCreate: false }, groupDatasets: true, layers: twoLayers, url: `${baseUrl}/test.gpkg` },
+      tmpDir: 'data/'
+    }, config, false)
+    axios = context.axios
+
+    await gpkgPlugin.run(context)
+    assert.equal(context.processingConfig.datasets.length, 2)
+    // children first: deleting the parent deletes its fragments with it
+    for (const { dataset } of context.processingConfig.datasets) createdIds.push(dataset.id)
+    createdIds.push(context.processingConfig.parentDataset.id)
+    await assertGrouped(context.processingConfig)
+  })
+
+  it('should attach existing datasets when the checkbox is checked afterwards', async function () {
+    const context = testUtils.context({
+      processingConfig: { datasetMode: 'create', dataset: { editableCreate: true }, groupDatasets: false, layers: twoLayers, url: `${baseUrl}/test.gpkg` },
+      tmpDir: 'data/'
+    }, config, false)
+    axios = context.axios
+
+    await gpkgPlugin.run(context)
+    assert.equal(context.processingConfig.parentDataset, undefined)
+    for (const { dataset } of context.processingConfig.datasets) createdIds.push(dataset.id)
+    await waitIndexed(axios, context.processingConfig.datasets[0].dataset.id, 19)
+    await waitIndexed(axios, context.processingConfig.datasets[1].dataset.id, 4)
+
+    const updateContext = testUtils.context({ processingConfig: { ...context.processingConfig, groupDatasets: true }, tmpDir: 'data/' }, config, false)
+    await gpkgPlugin.run(updateContext)
+    createdIds.push(updateContext.processingConfig.parentDataset.id)
+    await assertGrouped(updateContext.processingConfig)
+    await waitIndexed(axios, context.processingConfig.datasets[0].dataset.id, 19)
+  })
 })
