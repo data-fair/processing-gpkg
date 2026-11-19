@@ -645,7 +645,7 @@ const updateDatasets = async ({ processingConfig: rawConfig, axios, tmpDir, log,
       if (shouldBeStopped) return
       if (!tmpFileGeoJSON) continue
 
-      await sendFile(axios, log, `api/v1/datasets/${dataset.id}${update.forceUpdate ? '' : '?draft=true'}`, tmpFileGeoJSON, { origin: processingConfig.url as string })
+      await sendFile(axios, log, `api/v1/datasets/${dataset.id}?draft=${update.forceUpdate ? 'always' : 'compatibleOrCancel'}`, tmpFileGeoJSON, { origin: processingConfig.url as string })
 
       if (shouldBeStopped) return
 

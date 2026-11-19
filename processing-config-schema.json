@@ -195,7 +195,9 @@
                   "forceUpdate": {
                     "type" : "boolean",
                     "title": "Force schema update",
-                    "x-i18n-title": { "fr": "Forcer la mise à jour du schéma" }
+                    "x-i18n-title": { "fr": "Forcer la mise à jour du schéma" },
+                    "description": "Unchecked, a layer whose columns no longer match the dataset is rejected and the published data stays online. Checked, the layer always replaces the data, even when its columns changed.",
+                    "x-i18n-description": { "fr": "Décochée, une couche dont les colonnes ne correspondent plus au jeu est rejetée et les données publiées restent en ligne. Cochée, la couche remplace toujours les données, même si ses colonnes ont changé." }
                   }
                 }
               }
